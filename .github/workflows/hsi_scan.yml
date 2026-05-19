@@ -1,0 +1,76 @@
+name: HSI Signal Scan
+
+on:
+  schedule:
+    # Run hourly during HK market hours (HKT 09:30-16:00 = UTC 01:30-08:00) Mon-Fri
+    - cron: '30 1 * * 1-5'
+    - cron: '0 3 * * 1-5'
+    - cron: '30 4 * * 1-5'
+    - cron: '0 6 * * 1-5'
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'History period'
+        required: false
+        default: '1y'
+        type: choice
+        options: ['5d', '1mo', '3mo', '6mo', '1y', '2y']
+      conditions:
+        description: 'Conditions to match'
+        required: false
+        default: 's1_breakout,s2_breakout'
+        type: string
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HSI_SCAN_PERIOD: ${{ inputs.period || '1y' }}
+  HSI_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
+
+jobs:
+  hsi-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance pandas numpy python-dotenv exchange-calendars
+
+      - name: Run HSI scan
+        id: scan
+        run: |
+          python -c "
+          import os, sys, json
+          sys.path.insert(0, '.')
+          from src.services.hsi_scanner import scan_hsi_and_notify
+
+          # Inject notification configs from GitHub Secrets
+          if '${{ secrets.WECHAT_WEBHOOK_URL }}':
+              os.environ['WECHAT_WEBHOOK_URL'] = '${{ secrets.WECHAT_WEBHOOK_URL }}'
+          if '${{ secrets.FEISHU_WEBHOOK_URL }}':
+              os.environ['FEISHU_WEBHOOK_URL'] = '${{ secrets.FEISHU_WEBHOOK_URL }}'
+          if '${{ secrets.TELEGRAM_BOT_TOKEN }}':
+              os.environ['TELEGRAM_BOT_TOKEN'] = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
+              os.environ['TELEGRAM_CHAT_ID'] = '${{ secrets.TELEGRAM_CHAT_ID }}'
+          if '${{ secrets.DISCORD_WEBHOOK_URL }}':
+              os.environ['DISCORD_WEBHOOK_URL'] = '${{ secrets.DISCORD_WEBHOOK_URL }}'
+          if '${{ secrets.EMAIL_SENDER }}':
+              os.environ['EMAIL_SENDER'] = '${{ secrets.EMAIL_SENDER }}'
+              os.environ['EMAIL_PASSWORD'] = '${{ secrets.EMAIL_PASSWORD }}'
+
+          payload = scan_hsi_and_notify(
+              period=os.getenv('HSI_SCAN_PERIOD', '1y'),
+              conditions=os.getenv('HSI_SCAN_CONDITIONS', 's1_breakout,s2_breakout'),
+          )
+
+          print(json.dumps(payload['stats'], indent=2))
+          print(f'Matched: {len(payload[\"matches\"])} stocks')
+          "

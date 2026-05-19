@@ -1,0 +1,59 @@
+# Trigger the existing "每日股票分析" workflow via repository_dispatch (external HTTP callers).
+#
+# Example (requires PAT or GitHub App with contents + actions on this repo):
+#   curl -L -X POST \
+#     -H "Accept: application/vnd.github+json" \
+#     -H "Authorization: Bearer YOUR_TOKEN" \
+#     https://api.github.com/repos/OWNER/REPO/dispatches \
+#     -d '{"event_type":"run-daily-analysis","client_payload":{"ref":"main","mode":"full","force_run":false}}'
+#
+# client_payload (all optional):
+#   ref        — git ref to run workflow on (default: repo default branch)
+#   mode       — full | market-only | stocks-only (default: full)
+#   force_run  — boolean, maps to workflow_dispatch force_run
+
+name: Repository dispatch → daily analysis
+
+on:
+  repository_dispatch:
+    types: [run-daily-analysis]
+
+concurrency:
+  group: repository-dispatch-analysis-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Trigger daily_analysis.yml
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload || {};
+            const repo = context.repo;
+            const ref = String(payload.ref || process.env.DEFAULT_BRANCH || 'main').replace(
+              /^refs\/heads\//,
+              '',
+            );
+            const mode = ['full', 'market-only', 'stocks-only'].includes(payload.mode)
+              ? payload.mode
+              : 'full';
+            const force_run = payload.force_run === true || payload.force_run === 'true';
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: repo.owner,
+              repo: repo.repo,
+              workflow_id: 'daily_analysis.yml',
+              ref,
+              inputs: {
+                mode,
+                force_run: force_run ? 'true' : 'false',
+              },
+            });
+            core.info(`Dispatched daily_analysis.yml ref=${ref} mode=${mode} force_run=${force_run}`);

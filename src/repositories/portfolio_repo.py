@@ -572,7 +572,7 @@ class PortfolioRepository:
         account_id: Optional[int],
         date_from: Optional[date],
         date_to: Optional[date],
-        symbol: Optional[str],
+        symbols: Optional[List[str]],
         side: Optional[str],
         page: int,
         page_size: int,
@@ -585,8 +585,8 @@ class PortfolioRepository:
                 conditions.append(PortfolioTrade.trade_date >= date_from)
             if date_to is not None:
                 conditions.append(PortfolioTrade.trade_date <= date_to)
-            if symbol:
-                conditions.append(PortfolioTrade.symbol == symbol)
+            if symbols:
+                conditions.append(PortfolioTrade.symbol.in_(symbols))
             if side:
                 conditions.append(PortfolioTrade.side == side)
 
@@ -649,7 +649,7 @@ class PortfolioRepository:
         account_id: Optional[int],
         date_from: Optional[date],
         date_to: Optional[date],
-        symbol: Optional[str],
+        symbols: Optional[List[str]],
         action_type: Optional[str],
         page: int,
         page_size: int,
@@ -662,8 +662,8 @@ class PortfolioRepository:
                 conditions.append(PortfolioCorporateAction.effective_date >= date_from)
             if date_to is not None:
                 conditions.append(PortfolioCorporateAction.effective_date <= date_to)
-            if symbol:
-                conditions.append(PortfolioCorporateAction.symbol == symbol)
+            if symbols:
+                conditions.append(PortfolioCorporateAction.symbol.in_(symbols))
             if action_type:
                 conditions.append(PortfolioCorporateAction.action_type == action_type)
 

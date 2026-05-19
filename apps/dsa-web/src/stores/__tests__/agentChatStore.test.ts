@@ -78,6 +78,45 @@ describe('agentChatStore.startStream', () => {
     expect(state.progressSteps).toEqual([]);
   });
 
+  it('preserves multiple selected skills on streamed user and assistant messages', async () => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"done","success":true,"content":"多策略分析结果"}',
+      ]),
+    );
+
+    await useAgentChatStore
+      .getState()
+      .startStream(
+        {
+          message: '分析茅台',
+          session_id: 'session-test',
+          skills: ['bull_trend', 'ma_golden_cross'],
+        },
+        {
+          skillNames: ['趋势分析', '均线金叉'],
+        },
+      );
+
+    const state = useAgentChatStore.getState();
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0]).toMatchObject({
+      role: 'user',
+      skills: ['bull_trend', 'ma_golden_cross'],
+      skill: 'bull_trend',
+      skillNames: ['趋势分析', '均线金叉'],
+      skillName: '趋势分析、均线金叉',
+    });
+    expect(state.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '多策略分析结果',
+      skills: ['bull_trend', 'ma_golden_cross'],
+      skill: 'bull_trend',
+      skillNames: ['趋势分析', '均线金叉'],
+      skillName: '趋势分析、均线金叉',
+    });
+  });
+
   it('preserves parsed error details when done.success is false', async () => {
     vi.mocked(agentApi.chatStream).mockResolvedValue(
       createStreamResponse([

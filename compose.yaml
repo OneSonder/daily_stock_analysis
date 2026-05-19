@@ -1,0 +1,10 @@
+# Convenience entrypoint: run from repo root without -f docker/docker-compose.yml
+#
+#   docker compose up -d
+#   docker compose up -d analyzer
+#   docker compose up -d server
+#
+# Requires Docker Compose v2 with `include` support (Compose Specification 2.20+).
+
+include:
+  - path: docker/docker-compose.yml

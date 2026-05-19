@@ -80,6 +80,12 @@ function formatPct(value: number | undefined | null): string {
   return `${value.toFixed(2)}%`;
 }
 
+function formatSignedPct(value: number | undefined | null): string {
+  if (value == null || Number.isNaN(value)) return '--';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
 function hasPositionPrice(row: PortfolioPositionItem): boolean {
   return row.priceAvailable !== false && row.priceSource !== 'missing';
 }
@@ -995,6 +1001,7 @@ const PortfolioPage: React.FC = () => {
                     <th className="text-right py-2 pr-2">现价</th>
                     <th className="text-right py-2 pr-2">市值</th>
                     <th className="text-right py-2">未实现盈亏</th>
+                    <th className="text-right py-2">收益率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1021,6 +1028,17 @@ const PortfolioPage: React.FC = () => {
                         }`}
                       >
                         {formatPositionMoney(row.unrealizedPnlBase, row)}
+                      </td>
+                      <td
+                        className={`py-2 text-right ${
+                          hasPositionPrice(row) && row.unrealizedPnlPct !== null && row.unrealizedPnlPct !== undefined
+                            ? row.unrealizedPnlPct >= 0
+                              ? 'text-success'
+                              : 'text-danger'
+                            : 'text-secondary'
+                        }`}
+                      >
+                        {formatSignedPct(row.unrealizedPnlPct)}
                       </td>
                     </tr>
                   ))}

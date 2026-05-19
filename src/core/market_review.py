@@ -118,7 +118,7 @@ def run_market_review(
         
         if review_report:
             # 保存报告到文件
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_filename = f"market_review_{date_str}.md"
             filepath = notifier.save_report_to_file(
                 f"{review_text['root_title']}\n\n{review_report}",
@@ -133,7 +133,7 @@ def run_market_review(
                 # 添加标题
                 report_content = f"{review_text['push_title']}\n\n{review_report}"
 
-                success = notifier.send(report_content, email_send_to_all=True)
+                success = notifier.send(report_content, email_send_to_all=True, route_type="report")
                 if success:
                     logger.info("大盘复盘推送成功")
                 else:

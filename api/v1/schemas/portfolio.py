@@ -159,6 +159,7 @@ class PortfolioPositionItem(BaseModel):
     last_price: float
     market_value_base: float
     unrealized_pnl_base: float
+    unrealized_pnl_pct: Optional[float] = None
     valuation_currency: str
     price_source: str = "unknown"
     price_provider: Optional[str] = None

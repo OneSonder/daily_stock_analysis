@@ -1,0 +1,72 @@
+# S1/S2 Breakout Signal Strategy / S1/S2 突破信号
+# Detects price breakouts above 20-day (S1) and 55-day (S2) highs.
+#
+# Signal definitions:
+# - S1 breakout: today's high > yesterday's 20-day rolling high
+# - S2 breakout: today's high > yesterday's 55-day rolling high
+# - S1 exit: today's low < yesterday's 10-day rolling low
+# - S2 exit: today's low < yesterday's 20-day rolling low
+# - Close vs entry: close >= latest 20-day high level
+# - Close vs S2 entry: close >= latest 55-day high level
+
+name: s1_s2_breakout
+display_name: S1/S2 突破信号
+description: 检测股价突破20日高点(S1)和55日高点(S2)的短期/中期突破信号，含收盘确认与出口信号。
+category: trend
+core_rules: [1, 2, 3]
+required_tools:
+  - get_daily_history
+  - analyze_trend
+aliases: [S1突破, S2突破, 突破信号, 高低点突破, S1 breakout, S2 breakout]
+default_active: true
+default_priority: 40
+market_regimes: [trending_up, volatile]
+
+instructions: |
+  **S1/S2 突破信号策略**
+
+  适用场景：
+  - 港股、美股或任何有足够日线数据的市场。
+  - 寻找短期（S1）和中期（S2）趋势突破机会。
+
+  分析框架：
+
+  1. **S1 突破（短期动量）**
+     - 今日最高价突破过去20日最高价（S1 Entry 位）。
+     - 代表短期动量突破，适合短线交易者关注。
+     - 使用 `analyze_trend` 确认短期均线（MA5、MA10）是否同步向上。
+
+  2. **S2 突破（中期趋势）**
+     - 今日最高价突破过去55日最高价（S2 Entry 位）。
+     - 代表中期趋势突破，信号强度高于 S1。
+     - 若 S1 与 S2 同时突破（双重突破），趋势确认更强。
+
+  3. **收盘确认**
+     - 收盘价是否站上 S1 Entry 位（`close_vs_entry`）。
+     - 收盘价是否站上 S2 Entry 位（`close_vs_s2_entry`）。
+     - 若收盘价低于 Entry 位但盘中突破，需警惕假突破或上影线。
+
+  4. **出口信号（风险管理）**
+     - S1 出口：最低价跌破过去10日最低价（短线止损参考）。
+     - S2 出口：最低价跌破过去20日最低价（中线止损参考）。
+     - 出口信号触发时，应评估持仓风险。
+
+  5. **结合乖离率**（关联理念1：严进策略）
+     - 突破后检查乖离率：若价格远离 MA5 超过 5%，提示不追高。
+     - 强势趋势股可适当放宽至 1.5 倍。
+
+  6. **量能验证**（关联理念3：效率优先）
+     - 突破日是否放量：成交量 > 5日均量 1.5 倍以上为有效突破。
+     - 缩量突破需谨慎，可能为假突破。
+
+  评分调整建议：
+  - S1 突破确认：`sentiment_score +8`
+  - S2 突破确认：`sentiment_score +12`
+  - S1 + S2 双重突破：`sentiment_score +15`
+  - 收盘站上 S1 Entry：`sentiment_score +5`
+  - 收盘站上 S2 Entry：`sentiment_score +8`
+  - S1 出口触发：`sentiment_score -8`
+  - S2 出口触发：`sentiment_score -12`
+  - 突破 + 放量确认：额外 `+5`
+  - 假突破（突破后回落至 Entry 以下）：`sentiment_score -10`
+  - 在 `buy_reason` 和 `technical_signal` 中注明"S1突破"或"S2突破"。

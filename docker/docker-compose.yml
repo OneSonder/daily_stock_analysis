@@ -1,11 +1,15 @@
 # ===================================
 # A股自选股智能分析系统 - Docker Compose
 # ===================================
-# 
+#
+# 远程 / 在线 API：优先启动 `server`（FastAPI），映射端口并配置 HTTPS + 鉴权于反向代理层。
+# GitHub 定时跑批：见 .github/workflows/daily_analysis.yml，或使用 repository_dispatch 触发。
+#
 # 使用方式:
-#   定时模式: docker-compose -f ./docker/docker-compose.yml up -d
-#   FastAPI模式: docker-compose -f ./docker/docker-compose.yml up -d server
-#   同时启动: docker-compose -f ./docker/docker-compose.yml up -d analyzer server
+#   从仓库根目录: docker compose up -d    （见 ../compose.yaml include 本文件）
+#   定时模式: docker compose -f docker/docker-compose.yml up -d analyzer
+#   FastAPI模式: docker compose -f docker/docker-compose.yml up -d server
+#   同时启动: docker compose -f docker/docker-compose.yml up -d analyzer server
 
 name: daily-stock-analysis
 version: '3.8'
@@ -63,6 +67,13 @@ services:
     <<: *common
     container_name: stock-server
     command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+    # LLM / 搜索较重：单独放宽上限（analyzer 仍沿用 x-common 默认）
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     # 若使用 network_mode: host，则以下 ports 映射无效，端口由 command 中的 --port 指定
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"
