@@ -35,7 +35,8 @@ from src.agent.protocols import (
     StageResult,
     StageStatus,
 )
-from src.config import AGENT_MAX_STEPS_DEFAULT
+from src.config import AGENT_MAX_STEPS_DEFAULT, Config
+from src.storage import DatabaseManager
 
 
 # ============================================================
@@ -544,6 +545,26 @@ class TestOrchestratorModes(unittest.TestCase):
         self.assertEqual(ctx.stock_name, "贵州茅台")
         self.assertEqual(ctx.meta["skills_requested"], ["bull_trend"])
 
+    def test_build_context_keeps_market_phase_context_in_meta_not_data(self):
+        orch = self._make_orchestrator()
+        phase_context = {"phase": "intraday", "is_partial_bar": True}
+        pack_summary = "\n## 分析上下文包摘要\n- 数据块状态：行情 available\n"
+
+        ctx = orch._build_context(
+            "Analyze 600519",
+            context={
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "market_phase_context": phase_context,
+                "analysis_context_pack_summary": pack_summary,
+            },
+        )
+
+        self.assertEqual(ctx.meta["market_phase_context"], phase_context)
+        self.assertEqual(ctx.meta["analysis_context_pack_summary"], pack_summary)
+        self.assertNotIn("market_phase_context", ctx.data)
+        self.assertNotIn("analysis_context_pack_summary", ctx.data)
+
     def test_build_context_extracts_code_from_query(self):
         orch = self._make_orchestrator()
         ctx = orch._build_context("分析600519的走势")
@@ -875,12 +896,75 @@ class TestOrchestratorExecution(unittest.TestCase):
             return OrchestratorResult(success=True, content="assistant reply")
 
         with patch.object(orch, "_execute_pipeline", side_effect=fake_execute):
-            with patch("src.agent.conversation.conversation_manager.get_or_create") as get_or_create:
-                get_or_create.return_value.get_history.return_value = history
-                with patch("src.agent.conversation.conversation_manager.add_message"):
-                    orch.chat("hello", "session-1")
+            with patch("src.agent.orchestrator.build_visible_chat_history", return_value=history):
+                with patch("src.agent.conversation.conversation_manager.get_or_create"):
+                    with patch("src.agent.conversation.conversation_manager.add_message"):
+                        orch.chat("hello", "session-1")
 
         self.assertEqual(captured["history"], history)
+
+    def test_chat_uses_compressed_history_builder(self):
+        from src.agent.orchestrator import OrchestratorResult
+
+        orch = self._make_orchestrator()
+
+        with patch.object(orch, "_execute_pipeline", return_value=OrchestratorResult(success=True, content="ok")):
+            with patch("src.agent.orchestrator.build_visible_chat_history", return_value=[]) as build_history:
+                with patch("src.agent.conversation.conversation_manager.get_or_create"):
+                    with patch("src.agent.conversation.conversation_manager.add_message"):
+                        orch.chat("hello", "session-1")
+
+        build_history.assert_called_once()
+        self.assertEqual(build_history.call_args.args[0], "session-1")
+        self.assertIs(build_history.call_args.args[1], orch.llm_adapter)
+
+    def test_chat_does_not_read_or_write_provider_trace(self):
+        from src.agent.orchestrator import OrchestratorResult
+
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
+        db = DatabaseManager(db_url="sqlite:///:memory:")
+        session_id = "multi-agent-trace-boundary"
+        user_id = db.save_conversation_message(session_id, "user", "previous question")
+        assistant_id = db.save_conversation_message(session_id, "assistant", "previous answer")
+        db.save_agent_provider_turn(
+            session_id=session_id,
+            run_id="run-existing",
+            provider="deepseek",
+            model="deepseek/deepseek-chat",
+            anchor_user_message_id=user_id,
+            anchor_assistant_message_id=assistant_id,
+            messages=[
+                {
+                    "role": "assistant",
+                    "reasoning_content": "reasoning",
+                    "tool_calls": [{"id": "call_1", "name": "echo", "arguments": {}}],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "tool-result"},
+            ],
+            contains_reasoning=True,
+            contains_tool_calls=True,
+            contains_thinking_blocks=False,
+            must_roundtrip=True,
+            estimated_tokens=10,
+        )
+
+        orch = self._make_orchestrator()
+        try:
+            with patch.object(orch, "_execute_pipeline", return_value=OrchestratorResult(success=True, content="ok")):
+                with patch("src.agent.orchestrator.build_visible_chat_history", return_value=[]) as build_history:
+                    with patch.object(db, "get_agent_provider_turns", wraps=db.get_agent_provider_turns) as get_turns:
+                        result = orch.chat("hello", session_id)
+
+            self.assertTrue(result.success)
+            build_history.assert_called_once()
+            get_turns.assert_not_called()
+            rows = db.get_agent_provider_turns(session_id)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["run_id"], "run-existing")
+        finally:
+            DatabaseManager.reset_instance()
+            Config.reset_instance()
 
     def test_chat_persists_user_and_assistant_messages(self):
         from src.agent.orchestrator import OrchestratorResult
@@ -1086,6 +1170,49 @@ class TestBaseAgentMessageAssembly(unittest.TestCase):
         self.assertEqual(messages[2], {"role": "assistant", "content": "old answer"})
         self.assertEqual(messages[-1], {"role": "user", "content": "current turn"})
 
+    def test_build_messages_injects_market_phase_before_cached_data(self):
+        agent = self._make_agent()
+        ctx = AgentContext(query="hello", stock_code="600519")
+        ctx.meta["market_phase_context"] = {
+            "market": "cn",
+            "phase": "intraday",
+            "market_local_time": "2026-03-27T10:00:00+08:00",
+            "effective_daily_bar_date": "2026-03-26",
+            "is_partial_bar": True,
+            "minutes_to_close": 300,
+        }
+        ctx.meta["analysis_context_pack_summary"] = "\n## 分析上下文包摘要\n- 数据块状态：行情 available\n"
+        ctx.set_data("realtime_quote", {"price": 1880.0})
+
+        messages = agent._build_messages(ctx)
+
+        phase_indexes = [
+            idx for idx, message in enumerate(messages)
+            if "市场阶段上下文" in message.get("content", "")
+        ]
+        cached_indexes = [
+            idx for idx, message in enumerate(messages)
+            if "[Pre-fetched: realtime_quote]" in message.get("content", "")
+        ]
+        pack_indexes = [
+            idx for idx, message in enumerate(messages)
+            if "分析上下文包摘要" in message.get("content", "")
+        ]
+        self.assertEqual(len(phase_indexes), 1)
+        self.assertEqual(len(pack_indexes), 1)
+        self.assertEqual(len(cached_indexes), 1)
+        self.assertLess(phase_indexes[0], pack_indexes[0])
+        self.assertLess(pack_indexes[0], cached_indexes[0])
+        phase_message = messages[phase_indexes[0]]
+        self.assertEqual(phase_message["role"], "user")
+        self.assertIn("盘中", phase_message["content"])
+        self.assertIn("不得当作完整日线复盘", phase_message["content"])
+        self.assertNotIn("market_phase_context", phase_message["content"])
+        self.assertNotIn("is_partial_bar", phase_message["content"])
+        pack_message = messages[pack_indexes[0]]
+        self.assertEqual(pack_message["role"], "user")
+        self.assertNotIn("analysis_context_pack_summary", pack_message["content"])
+
 
 # ============================================================
 # EventMonitor serialization
@@ -1095,18 +1222,63 @@ class TestEventMonitor(unittest.TestCase):
     """Test EventMonitor serialize/deserialize round-trip."""
 
     def test_round_trip(self):
-        from src.agent.events import EventMonitor, PriceAlert, VolumeAlert
+        from src.agent.events import EventMonitor, PriceAlert, PriceChangeAlert, VolumeAlert
         monitor = EventMonitor()
         monitor.add_alert(PriceAlert(stock_code="600519", direction="above", price=1800.0))
+        monitor.add_alert(PriceChangeAlert(stock_code="300750", direction="down", change_pct=3.5))
         monitor.add_alert(VolumeAlert(stock_code="000858", multiplier=3.0))
 
         data = monitor.to_dict_list()
-        self.assertEqual(len(data), 2)
+        self.assertEqual(len(data), 3)
+        self.assertEqual(data[1]["alert_type"], "price_change_percent")
+        self.assertEqual(data[1]["change_pct"], 3.5)
 
         restored = EventMonitor.from_dict_list(data)
-        self.assertEqual(len(restored.rules), 2)
+        self.assertEqual(len(restored.rules), 3)
         self.assertEqual(restored.rules[0].stock_code, "600519")
-        self.assertEqual(restored.rules[1].stock_code, "000858")
+        self.assertEqual(restored.rules[1].stock_code, "300750")
+        self.assertEqual(restored.rules[2].stock_code, "000858")
+
+    def test_serialization_contract_keeps_supported_rule_keys_stable(self):
+        from src.agent.events import (
+            AlertStatus,
+            EventMonitor,
+            PriceAlert,
+            PriceChangeAlert,
+            VolumeAlert,
+        )
+
+        monitor = EventMonitor()
+        monitor.add_alert(PriceAlert(stock_code="600519", direction="above", price=1800.0))
+        monitor.add_alert(PriceChangeAlert(stock_code="300750", direction="down", change_pct=3.5))
+        monitor.add_alert(VolumeAlert(stock_code="000858", multiplier=3.0))
+        monitor.rules[1].status = AlertStatus.TRIGGERED
+        monitor.rules[2].status = AlertStatus.EXPIRED
+
+        data = monitor.to_dict_list()
+
+        common_keys = {
+            "stock_code",
+            "alert_type",
+            "description",
+            "status",
+            "created_at",
+            "ttl_hours",
+        }
+        self.assertEqual(set(data[0]), common_keys | {"direction", "price"})
+        self.assertEqual(set(data[1]), common_keys | {"direction", "change_pct"})
+        self.assertEqual(set(data[2]), common_keys | {"multiplier"})
+        known_status_values = {status.value for status in AlertStatus}
+        for entry in data:
+            self.assertIn(entry["status"], known_status_values)
+
+        restored = EventMonitor.from_dict_list(data)
+
+        self.assertEqual([rule.status for rule in restored.rules], [
+            AlertStatus.ACTIVE,
+            AlertStatus.TRIGGERED,
+            AlertStatus.EXPIRED,
+        ])
 
     def test_remove_expired(self):
         import time
@@ -1127,6 +1299,38 @@ class TestEventMonitor(unittest.TestCase):
         with self.assertRaises(ValueError):
             monitor.add_alert(SentimentAlert(stock_code="600519"))
 
+    def test_from_dict_list_skips_unsupported_placeholder_rule_type(self):
+        from src.agent.events import EventMonitor
+
+        data = [
+            {"stock_code": "600519", "alert_type": "sentiment_shift"},
+            {
+                "stock_code": "000858",
+                "alert_type": "volume_spike",
+                "multiplier": 2.5,
+            },
+        ]
+
+        monitor = EventMonitor.from_dict_list(data)
+
+        self.assertEqual(len(monitor.rules), 1)
+        self.assertEqual(monitor.rules[0].stock_code, "000858")
+
+    def test_from_dict_list_skips_price_change_without_change_pct(self):
+        from src.agent.events import EventMonitor
+
+        data = [
+            {
+                "stock_code": "300750",
+                "alert_type": "price_change_percent",
+                "direction": "up",
+            }
+        ]
+
+        monitor = EventMonitor.from_dict_list(data)
+
+        self.assertEqual(monitor.rules, [])
+
 
 class TestEventMonitorAsync(unittest.IsolatedAsyncioTestCase):
     """Test async EventMonitor checks offload blocking fetches."""
@@ -1144,6 +1348,57 @@ class TestEventMonitorAsync(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(triggered)
         self.assertEqual(triggered.rule.stock_code, "600519")
         to_thread.assert_awaited_once()
+
+    async def test_check_price_change_uses_to_thread_and_triggers(self):
+        from src.agent.events import EventMonitor, PriceChangeAlert
+
+        monitor = EventMonitor()
+        rule = PriceChangeAlert(stock_code="300750", direction="down", change_pct=3.0)
+        quote = SimpleNamespace(change_pct=-3.25)
+
+        with patch("src.agent.events.asyncio.to_thread", new=AsyncMock(return_value=quote)) as to_thread:
+            triggered = await monitor._check_price_change(rule)
+
+        self.assertIsNotNone(triggered)
+        self.assertEqual(triggered.rule.stock_code, "300750")
+        self.assertEqual(triggered.current_value, -3.25)
+        self.assertIn("current = -3.25%", triggered.message)
+        to_thread.assert_awaited_once()
+
+    async def test_check_price_change_accepts_dict_payload_alias(self):
+        from src.agent.events import EventMonitor, PriceChangeAlert
+
+        monitor = EventMonitor()
+        rule = PriceChangeAlert(stock_code="AAPL", direction="up", change_pct=2.0)
+
+        with patch("src.agent.events.asyncio.to_thread", new=AsyncMock(return_value={"pct_chg": "2.35%"})):
+            triggered = await monitor._check_price_change(rule)
+
+        self.assertIsNotNone(triggered)
+        self.assertEqual(triggered.current_value, 2.35)
+
+    async def test_realtime_rules_create_fetcher_manager_per_quote_check(self):
+        from src.agent.events import EventMonitor, PriceAlert, PriceChangeAlert
+
+        monitor = EventMonitor()
+        monitor.add_alert(PriceAlert(stock_code="600519", direction="above", price=1800.0))
+        monitor.add_alert(PriceChangeAlert(stock_code="600519", direction="up", change_pct=3.0))
+        managers = [MagicMock(), MagicMock()]
+        for manager in managers:
+            manager.get_realtime_quote.return_value = SimpleNamespace(price=1810.0, change_pct=3.25)
+
+        async def _run_inline(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with patch("data_provider.DataFetcherManager", side_effect=managers) as manager_factory, patch(
+            "src.agent.events.asyncio.to_thread", new=_run_inline
+        ):
+            triggered = await monitor.check_all()
+
+        self.assertEqual(manager_factory.call_count, 2)
+        for manager in managers:
+            manager.get_realtime_quote.assert_called_once_with("600519")
+        self.assertEqual(len(triggered), 2)
 
     async def test_check_volume_safe_when_fetch_returns_none(self):
         """_check_volume must not crash when get_daily_data returns None."""
@@ -1194,6 +1449,43 @@ class TestEventMonitorConfigIntegration(unittest.TestCase):
         self.assertIsNotNone(monitor)
         self.assertEqual(len(monitor.rules), 1)
         self.assertEqual(monitor.rules[0].stock_code, "600519")
+
+    def test_configured_event_monitor_notification_uses_alert_route(self):
+        from src.agent.events import TriggeredAlert, build_event_monitor_from_config
+
+        config = SimpleNamespace(
+            agent_event_monitor_enabled=True,
+            agent_event_alert_rules_json='[{"stock_code":"600519","alert_type":"price_cross","direction":"above","price":1800}]',
+        )
+        notifier = MagicMock()
+        notifier.send.return_value = True
+
+        monitor = build_event_monitor_from_config(config=config, notifier=notifier)
+
+        self.assertIsNotNone(monitor)
+        monitor._callbacks[0](TriggeredAlert(rule=monitor.rules[0], message="hit"))
+        notifier.send.assert_called_once()
+        self.assertIn("hit", notifier.send.call_args.args[0])
+        self.assertEqual(notifier.send.call_args.kwargs["route_type"], "alert")
+
+    def test_build_event_monitor_from_config_accepts_price_change_percent(self):
+        from src.agent.events import PriceChangeAlert, build_event_monitor_from_config
+
+        config = SimpleNamespace(
+            agent_event_monitor_enabled=True,
+            agent_event_alert_rules_json=(
+                '[{"stock_code":"300750","alert_type":"price_change_percent",'
+                '"direction":"down","change_pct":3.5}]'
+            ),
+        )
+
+        with patch("src.notification.NotificationService", return_value=MagicMock()):
+            monitor = build_event_monitor_from_config(config=config)
+
+        self.assertIsNotNone(monitor)
+        self.assertEqual(len(monitor.rules), 1)
+        self.assertIsInstance(monitor.rules[0], PriceChangeAlert)
+        self.assertEqual(monitor.rules[0].change_pct, 3.5)
 
     def test_build_event_monitor_returns_none_on_invalid_json(self):
         from src.agent.events import build_event_monitor_from_config
@@ -1330,6 +1622,23 @@ class TestBaseAgentMemoryIntegration(unittest.TestCase):
 
         self.assertIn("Memory: recent analysis history", injected)
         self.assertIn("signal=buy", injected)
+
+    def test_market_phase_meta_is_not_injected_as_prefetched_data(self):
+        memory = MagicMock(enabled=False)
+        agent = self._make_agent(memory)
+        ctx = AgentContext(query="test", stock_code="600519")
+        ctx.meta["market_phase_context"] = {"phase": "intraday"}
+        ctx.meta["analysis_context_pack_summary"] = "\n## 分析上下文包摘要\n- 数据块状态：行情 available\n"
+        ctx.set_data("realtime_quote", {"price": 1880.0})
+
+        injected = agent._inject_cached_data(ctx)
+
+        self.assertIn("[Pre-fetched: realtime_quote]", injected)
+        self.assertNotIn("market_phase_context", injected)
+        self.assertNotIn("[Pre-fetched: market_phase_context]", injected)
+        self.assertNotIn("analysis_context_pack_summary", injected)
+        self.assertNotIn("[Pre-fetched: analysis_context_pack_summary]", injected)
+        self.assertNotIn("分析上下文包摘要", injected)
 
     def test_memory_calibration_updates_confidence(self):
         memory = MagicMock(enabled=True)
@@ -1716,19 +2025,23 @@ class TestAgentResearchEndpoint(unittest.IsolatedAsyncioTestCase):
             is_agent_available=lambda: True,
         )
 
-        with patch("api.v1.endpoints.agent.get_config", return_value=config), \
-             patch("api.v1.endpoints.agent._run_research_in_background", new=AsyncMock(return_value=SimpleNamespace(
-                 success=False,
-                 report="",
-                 sub_questions=[],
-                 findings_count=0,
-                 total_tokens=0,
-                 duration_s=1.0,
-                 error="Deep research timed out after 1s",
-                 timed_out=True,
-             ))), \
-             patch("src.agent.factory.get_tool_registry", return_value=MagicMock()), \
-             patch("src.agent.llm_adapter.LLMToolAdapter", return_value=MagicMock()):
+        research_result = AsyncMock(return_value=SimpleNamespace(
+            success=False,
+            report="",
+            sub_questions=[],
+            findings_count=0,
+            total_tokens=0,
+            duration_s=1.0,
+            error="Deep research timed out after 1s",
+            timed_out=True,
+        ))
+
+        with (
+            patch("api.v1.endpoints.agent.get_config", return_value=config),
+            patch("api.v1.endpoints.agent._run_research_in_background", new=research_result),
+            patch("src.agent.factory.get_tool_registry", return_value=MagicMock()),
+            patch("src.agent.llm_adapter.LLMToolAdapter", return_value=MagicMock()),
+        ):
             response = await agent_research(ResearchRequest(question="600519 风险"))
 
         self.assertFalse(response.success)

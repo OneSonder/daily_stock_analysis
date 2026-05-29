@@ -6,6 +6,8 @@ import type {
   AnalyzeResponse,
   AnalyzeAsyncResponse,
   AnalysisReport,
+  MarketReviewAccepted,
+  MarketReviewRequest,
   TaskStatus,
   TaskListResponse,
 } from '../types/analysis';
@@ -28,6 +30,7 @@ export const analysisApi = {
       stock_name: data.stockName,
       original_query: data.originalQuery,
       selection_source: data.selectionSource,
+      skills: data.skills,
       ...(data.notify !== undefined && { notify: data.notify }),
     };
 
@@ -61,6 +64,7 @@ export const analysisApi = {
       stock_name: data.stockName,
       original_query: data.originalQuery,
       selection_source: data.selectionSource,
+      skills: data.skills,
       ...(data.notify !== undefined && { notify: data.notify }),
     };
 
@@ -85,6 +89,31 @@ export const analysisApi = {
     }
 
     return toCamelCase<AnalyzeAsyncResponse>(response.data);
+  },
+
+  /**
+   * Trigger market review in background mode.
+   */
+  triggerMarketReview: async (data: MarketReviewRequest = {}): Promise<MarketReviewAccepted> => {
+    const response = await apiClient.post<Record<string, unknown>>(
+      '/api/v1/analysis/market-review',
+      {
+        send_notification: data.sendNotification ?? true,
+      },
+      {
+        validateStatus: (status) => status === 202 || status === 409,
+      }
+    );
+
+    if (response.status === 409) {
+      const detail = response.data?.detail;
+      const message = detail && typeof detail === 'object' && 'message' in detail
+        ? String((detail as { message?: unknown }).message || '')
+        : String(response.data?.message || '');
+      throw new Error(message || '大盘复盘正在执行中，请稍后再试');
+    }
+
+    return toCamelCase<MarketReviewAccepted>(response.data);
   },
 
   /**

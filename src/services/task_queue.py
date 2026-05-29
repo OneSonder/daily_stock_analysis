@@ -21,12 +21,17 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, List, Any, TYPE_CHECKING, Tuple, Literal
+from typing import Optional, Dict, List, Any, TYPE_CHECKING, Tuple, Literal, Callable
 
 if TYPE_CHECKING:
     from asyncio import Queue as AsyncQueue
 
 from data_provider.base import canonical_stock_code, normalize_stock_code
+from src.services.run_diagnostics import (
+    activate_run_diagnostic_context,
+    get_current_diagnostic_context,
+    reset_run_diagnostic_context,
+)
 from src.utils.analysis_metadata import SELECTION_SOURCES
 
 logger = logging.getLogger(__name__)
@@ -71,11 +76,14 @@ class TaskInfo:
     completed_at: Optional[datetime] = None
     original_query: Optional[str] = None
     selection_source: Optional[str] = None
+    skills: Optional[List[str]] = None
+    trace_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
         return {
             "task_id": self.task_id,
+            "trace_id": self.trace_id or self.task_id,
             "stock_code": self.stock_code,
             "stock_name": self.stock_name,
             "status": self.status.value,
@@ -88,6 +96,7 @@ class TaskInfo:
             "error": self.error,
             "original_query": self.original_query,
             "selection_source": self.selection_source,
+            "skills": self.skills,
         }
     
     def copy(self) -> 'TaskInfo':
@@ -107,6 +116,8 @@ class TaskInfo:
             completed_at=self.completed_at,
             original_query=self.original_query,
             selection_source=self.selection_source,
+            skills=list(self.skills) if self.skills is not None else None,
+            trace_id=self.trace_id or self.task_id,
         )
 
 
@@ -300,6 +311,7 @@ class AnalysisTaskQueue:
         selection_source: Optional[str] = None,
         report_type: str = "detailed",
         force_refresh: bool = False,
+        skills: Optional[List[str]] = None,
     ) -> TaskInfo:
         """
         Submit a single analysis task.
@@ -329,6 +341,7 @@ class AnalysisTaskQueue:
             selection_source=selection_source,
             report_type=report_type,
             force_refresh=force_refresh,
+            skills=skills,
         )
         if duplicates:
             raise duplicates[0]
@@ -343,6 +356,7 @@ class AnalysisTaskQueue:
         report_type: str = "detailed",
         force_refresh: bool = False,
         notify: bool = True,
+        skills: Optional[List[str]] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -370,8 +384,10 @@ class AnalysisTaskQueue:
                     continue
 
                 task_id = uuid.uuid4().hex
+                task_skills = list(skills) if skills is not None else None
                 task_info = TaskInfo(
                     task_id=task_id,
+                    trace_id=task_id,
                     stock_code=stock_code,
                     stock_name=stock_name,
                     status=TaskStatus.PENDING,
@@ -379,6 +395,7 @@ class AnalysisTaskQueue:
                     report_type=report_type,
                     original_query=original_query,
                     selection_source=selection_source,
+                    skills=task_skills,
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -391,6 +408,7 @@ class AnalysisTaskQueue:
                         report_type,
                         force_refresh,
                         notify,
+                        task_skills,
                     )
                 except Exception:
                     # Roll back the current batch to avoid partial submission.
@@ -409,6 +427,49 @@ class AnalysisTaskQueue:
                 self._broadcast_event("task_created", task_info.to_dict())
 
         return accepted, duplicates
+
+    def submit_background_task(
+        self,
+        run_task: Callable[[], Optional[Any]],
+        *,
+        stock_code: str,
+        stock_name: Optional[str] = None,
+        report_type: str = "detailed",
+        message: Optional[str] = "任务已加入队列",
+        task_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> TaskInfo:
+        """
+        Submit a generic background callable with task lifecycle tracking.
+
+        This is used by callers that need task status visibility but do not
+        map to standard per-stock async analysis flow.
+        """
+        task_id = task_id or uuid.uuid4().hex
+        task_info = TaskInfo(
+            task_id=task_id,
+            trace_id=trace_id or task_id,
+            stock_code=stock_code,
+            stock_name=stock_name,
+            status=TaskStatus.PENDING,
+            message=message,
+            report_type=report_type,
+        )
+
+        with self._data_lock:
+            if task_id in self._tasks:
+                raise ValueError(f"任务 ID 已存在: {task_id}")
+            self._tasks[task_id] = task_info
+            try:
+                future = self.executor.submit(self._execute_background_task, task_id, run_task)
+            except Exception:
+                del self._tasks[task_id]
+                raise
+
+            self._futures[task_id] = future
+            self._broadcast_event("task_created", task_info.to_dict())
+
+        return task_info.copy()
 
     def _rollback_submitted_tasks_locked(self, task_ids: List[str]) -> None:
         """回滚当前批次已创建但尚未稳定返回给调用方的任务。"""
@@ -532,6 +593,7 @@ class AnalysisTaskQueue:
         report_type: str,
         force_refresh: bool,
         notify: bool = True,
+        skills: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -550,6 +612,7 @@ class AnalysisTaskQueue:
             task = self._tasks.get(task_id)
             if not task:
                 return None
+            trace_id = task.trace_id or task_id
             task.status = TaskStatus.PROCESSING
             task.started_at = datetime.now()
             task.message = "正在分析中..."
@@ -567,14 +630,27 @@ class AnalysisTaskQueue:
             def _on_progress(progress: int, message: str) -> None:
                 self.update_task_progress(task_id, progress, message)
 
+            diag_token = None
+            if get_current_diagnostic_context() is None:
+                diag_token = activate_run_diagnostic_context(
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    query_id=task_id,
+                    stock_code=stock_code,
+                    trigger_source="api",
+                )
             result = service.analyze_stock(
                 stock_code=stock_code,
                 report_type=report_type,
                 force_refresh=force_refresh,
                 query_id=task_id,
+                trace_id=trace_id,
                 send_notification=notify,
                 progress_callback=_on_progress,
+                skills=skills,
             )
+            reset_run_diagnostic_context(diag_token)
+            diag_token = None
             
             if result:
                 # 更新任务状态为完成
@@ -605,6 +681,8 @@ class AnalysisTaskQueue:
                 raise Exception(service.last_error or "分析返回空结果")
                 
         except Exception as e:
+            if "diag_token" in locals():
+                reset_run_diagnostic_context(diag_token)
             error_msg = str(e)
             logger.error(f"[TaskQueue] 任务失败: {task_id} ({stock_code}), 错误: {error_msg}")
             
@@ -626,6 +704,85 @@ class AnalysisTaskQueue:
             # 清理过期任务
             self._cleanup_old_tasks()
             
+            return None
+
+    def _execute_background_task(
+        self,
+        task_id: str,
+        run_task: Callable[[], Optional[Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        执行通用后台任务（支持自定义运行逻辑）
+
+        Args:
+            task_id: 任务 ID
+            run_task: 任务执行函数
+
+        Returns:
+            任务执行结果字典（可选）
+        """
+        with self._data_lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return None
+
+            trace_id = task.trace_id or task_id
+            task.status = TaskStatus.PROCESSING
+            task.started_at = datetime.now()
+            task.message = "任务执行中"
+            task.progress = 10
+            self._broadcast_event("task_started", task.to_dict())
+
+        try:
+            diag_token = None
+            if get_current_diagnostic_context() is None:
+                diag_token = activate_run_diagnostic_context(
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    query_id=task_id,
+                    stock_code=task.stock_code,
+                    trigger_source="api",
+                )
+            try:
+                result = run_task()
+            finally:
+                reset_run_diagnostic_context(diag_token)
+            if result is None:
+                raise RuntimeError("任务返回空结果，未生成可持久化内容")
+
+            with self._data_lock:
+                task = self._tasks.get(task_id)
+                if task:
+                    task.status = TaskStatus.COMPLETED
+                    task.progress = 100
+                    task.completed_at = datetime.now()
+                    task.result = result
+                    task.message = "任务执行完成"
+
+            self._broadcast_event("task_completed", task.to_dict())
+            logger.info(f"[TaskQueue] 自定义任务完成: {task_id}")
+
+            self._cleanup_old_tasks()
+            return result
+
+        except Exception as e:  # pragma: no cover - behavior verified in downstream tests
+            error_msg = str(e)
+            logger.error(
+                f"[TaskQueue] 自定义任务失败: {task_id}, 错误: {error_msg}"
+            )
+
+            with self._data_lock:
+                task = self._tasks.get(task_id)
+                if task:
+                    task.status = TaskStatus.FAILED
+                    task.completed_at = datetime.now()
+                    task.error = error_msg[:200]
+                    task.message = f"任务失败: {error_msg[:80]}"
+
+            if task:
+                self._broadcast_event("task_failed", task.to_dict())
+
+            self._cleanup_old_tasks()
             return None
     
     def _cleanup_old_tasks(self) -> int:

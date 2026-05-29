@@ -20,12 +20,16 @@ const {
   mockGetSkills,
   mockDeleteChatSession,
   mockSendChat,
+  mockGetSystemConfig,
+  mockUpdateSystemConfig,
   mockDownloadSession,
   mockFormatSessionAsMarkdown,
 } = vi.hoisted(() => ({
   mockGetSkills: vi.fn(),
   mockDeleteChatSession: vi.fn(),
   mockSendChat: vi.fn(),
+  mockGetSystemConfig: vi.fn(),
+  mockUpdateSystemConfig: vi.fn(),
   mockDownloadSession: vi.fn(),
   mockFormatSessionAsMarkdown: vi.fn(),
 }));
@@ -65,6 +69,13 @@ vi.mock('../../api/agent', () => ({
     getSkills: mockGetSkills,
     deleteChatSession: mockDeleteChatSession,
     sendChat: mockSendChat,
+  },
+}));
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getConfig: mockGetSystemConfig,
+    update: mockUpdateSystemConfig,
   },
 }));
 
@@ -147,6 +158,27 @@ beforeEach(() => {
   });
   mockDeleteChatSession.mockResolvedValue(undefined);
   mockSendChat.mockResolvedValue({ success: true });
+  mockGetSystemConfig.mockResolvedValue({
+    configVersion: 'cfg-v1',
+    maskToken: 'mask-token',
+    items: [
+      {
+        key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+        value: 'false',
+        rawValueExists: true,
+        isMasked: false,
+      },
+    ],
+  });
+  mockUpdateSystemConfig.mockResolvedValue({
+    success: true,
+    configVersion: 'cfg-v2',
+    appliedCount: 1,
+    skippedMaskedCount: 0,
+    reloadTriggered: true,
+    updatedKeys: ['AGENT_CONTEXT_COMPRESSION_ENABLED'],
+    warnings: [],
+  });
   mockDownloadSession.mockImplementation(() => {});
   mockFormatSessionAsMarkdown.mockReturnValue('# exported session');
 });
@@ -164,6 +196,91 @@ describe('ChatPage', () => {
     expect(screen.getByTestId('chat-message-scroll')).toBeInTheDocument();
     expect(mockLoadInitialSession).toHaveBeenCalled();
     expect(mockClearCompletionBadge).toHaveBeenCalled();
+  });
+
+  it('loads and saves the global context compression setting from the chat input area', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const compressionToggle = await screen.findByRole('checkbox', { name: /上下文压缩/ });
+
+    await waitFor(() => {
+      expect(compressionToggle).not.toBeDisabled();
+    });
+
+    expect(compressionToggle).not.toBeChecked();
+
+    fireEvent.click(compressionToggle);
+
+    await waitFor(() => {
+      expect(mockUpdateSystemConfig).toHaveBeenCalledWith({
+        configVersion: 'cfg-v1',
+        maskToken: 'mask-token',
+        reloadNow: true,
+        items: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+            value: 'true',
+          },
+        ],
+      });
+    });
+
+    expect(compressionToggle).toBeChecked();
+    expect(screen.getByText('已启用')).toBeInTheDocument();
+  });
+
+  it('rolls back the context compression switch when saving fails', async () => {
+    mockGetSystemConfig.mockResolvedValue({
+      configVersion: 'cfg-v1',
+      maskToken: 'mask-token',
+      items: [
+        {
+          key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+          value: 'true',
+          rawValueExists: true,
+          isMasked: false,
+        },
+      ],
+    });
+    mockUpdateSystemConfig.mockRejectedValue(
+      createParsedApiError({
+        title: '保存失败',
+        message: '配置服务不可用',
+        category: 'unknown',
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const compressionToggle = await screen.findByRole('checkbox', { name: /上下文压缩/ });
+
+    await waitFor(() => {
+      expect(compressionToggle).toBeChecked();
+      expect(compressionToggle).not.toBeDisabled();
+    });
+
+    fireEvent.click(compressionToggle);
+
+    await waitFor(() => {
+      expect(mockUpdateSystemConfig).toHaveBeenCalledWith(expect.objectContaining({
+        items: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+            value: 'false',
+          },
+        ],
+      }));
+      expect(compressionToggle).toBeChecked();
+    });
+    expect(screen.getByText('配置服务不可用')).toBeInTheDocument();
   });
 
   it('switches session when clicking anywhere on the session card', async () => {
@@ -244,6 +361,161 @@ describe('ChatPage', () => {
     const skillBadge = await screen.findByLabelText('技能 趋势分析');
     expect(skillBadge).toBeInTheDocument();
     expect(skillBadge).toHaveTextContent('趋势分析');
+  });
+
+  it('renders assistant multi-skill labels with shared badge semantics', async () => {
+    mockStoreState.messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '趋势偏强',
+        skills: ['bull_trend', 'ma_golden_cross'],
+        skillNames: ['趋势分析', '均线金叉'],
+      },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const skillBadge = await screen.findByLabelText('技能 趋势分析、均线金叉');
+    expect(skillBadge).toBeInTheDocument();
+    expect(skillBadge).toHaveTextContent('趋势分析、均线金叉');
+  });
+
+  it('selects the default skill after loading skills', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('checkbox', { name: '趋势分析' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: '通用分析' })).not.toBeChecked();
+  });
+
+  it('sends multiple selected skills in order', async () => {
+    mockGetSkills.mockResolvedValue({
+      skills: [
+        { id: 'bull_trend', name: '趋势分析', description: '默认趋势' },
+        { id: 'ma_golden_cross', name: '均线金叉', description: '均线交叉' },
+      ],
+      default_skill_id: 'bull_trend',
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 600519' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '分析 600519',
+          skills: ['bull_trend', 'ma_golden_cross'],
+        }),
+        expect.objectContaining({
+          skillNames: ['趋势分析', '均线金叉'],
+          skillName: '趋势分析、均线金叉',
+        }),
+      );
+    });
+  });
+
+  it('omits skills when all concrete skills are cleared', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '趋势分析' }));
+    expect(screen.getByRole('checkbox', { name: '通用分析' })).toBeChecked();
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 AAPL' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    const lastCall = mockStartStream.mock.calls[mockStartStream.mock.calls.length - 1];
+    expect(lastCall[0]).toEqual(expect.objectContaining({ message: '分析 AAPL' }));
+    expect(lastCall[0]).not.toHaveProperty('skills');
+    expect(lastCall[1]).toEqual(expect.objectContaining({
+      skillNames: ['通用'],
+      skillName: '通用',
+    }));
+  });
+
+  it('caps concrete skill selection at three and re-enables choices after unselecting', async () => {
+    mockGetSkills.mockResolvedValue({
+      skills: [
+        { id: 'bull_trend', name: '趋势分析', description: '默认趋势' },
+        { id: 'ma_golden_cross', name: '均线金叉', description: '均线交叉' },
+        { id: 'chan_theory', name: '缠论', description: '结构分析' },
+        { id: 'wave_theory', name: '波浪理论', description: '波浪分析' },
+      ],
+      default_skill_id: 'bull_trend',
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '缠论' }));
+
+    const wave = screen.getByRole('checkbox', { name: '波浪理论' });
+    expect(wave).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '均线金叉' }));
+    expect(wave).not.toBeDisabled();
+  });
+
+  it('quick questions override the current multi-skill selection', async () => {
+    mockGetSkills.mockResolvedValue({
+      skills: [
+        { id: 'bull_trend', name: '趋势分析', description: '默认趋势' },
+        { id: 'ma_golden_cross', name: '均线金叉', description: '均线交叉' },
+        { id: 'chan_theory', name: '缠论', description: '结构分析' },
+      ],
+      default_skill_id: 'bull_trend',
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.click(screen.getByRole('button', { name: '用缠论分析茅台' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '用缠论分析茅台',
+          skills: ['chan_theory'],
+        }),
+        expect.objectContaining({
+          skillNames: ['缠论'],
+          skillName: '缠论',
+        }),
+      );
+    });
   });
 
   it('keeps assistant message actions directly activatable in the DOM', async () => {

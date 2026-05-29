@@ -90,6 +90,12 @@ class TaskQueueConfigSyncTestCase(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(second.max_workers, 1)
 
+    def test_get_task_queue_supports_string_max_workers(self) -> None:
+        with patch("src.config.get_config", return_value=SimpleNamespace(max_workers="2")):
+            queue = get_task_queue()
+
+        self.assertEqual(queue.max_workers, 2)
+
     def test_dedupe_stock_code_key_normalizes_market_suffix(self) -> None:
         self.assertEqual(_dedupe_stock_code_key(" 600519.sh "), "600519")
 

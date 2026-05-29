@@ -24,6 +24,12 @@
 - 变更中英双语文档之一时，需评估另一份是否需要同步；若未同步，交付说明里要写明原因。
 - 注释、docstring、日志文案以清晰准确为准，不强制要求英文，但应与文件语境保持一致。
 
+## 1.1 PR 标题规范（非阻断建议）
+
+- 推荐使用 `<类型>: <修改内容>` 作为 PR 标题，例如 `fix: 修复大盘分析历史记录丢失`，优先类型为 `fix`/`feat`/`refactor`/`docs`/`chore`/`test`/`ci`。
+- 标题应描述实际变更内容，建议不添加 `[codex]`、`codex`、`autocode`、`copilot` 或其他工具/agent 来源前缀。
+- 该规范仅用于协作可读性与一致性提示，不应单独作为 review process blocker。
+
 ## 2. AI 协作资产治理
 
 - `AGENTS.md` 是仓库内 AI 协作规则的唯一真源。
@@ -138,7 +144,7 @@ gh run view <run_id> --log-failed
 | `backend-gate` | `.github/workflows/ci.yml` | 执行 `./scripts/ci_gate.sh` | 是 |
 | `docker-build` | `.github/workflows/ci.yml` | Docker 构建与关键模块导入 smoke | 是 |
 | `web-gate` | `.github/workflows/ci.yml` | 前端改动时执行 `npm run lint` + `npm run build` | 是（触发时） |
-| `network-smoke` | `.github/workflows/network-smoke.yml` | `pytest -m network` + `test.sh quick` | 否，观测项 |
+| `network-smoke` | `.github/workflows/network-smoke.yml` | `pytest -m network` + `scripts/test.sh quick` | 否，观测项 |
 | `pr-review` | `.github/workflows/pr-review.yml` | PR 静态检查 + AI 审查 + 自动标签 | 否，辅助项 |
 
 若 PR 上已有对应 CI 结果，可直接引用 CI 结论；若 CI 未覆盖改动面，或本地与 CI 环境差异较大，需要补充说明本地验证与缺口。
@@ -219,10 +225,11 @@ gh run view <run_id> --log-failed
 - PR 审查默认顺序：
   1. 必要性
   2. 关联性
-  3. 描述完整性（对照 `.github/PULL_REQUEST_TEMPLATE.md`）
-  4. 验证证据
-  5. 实现正确性
-  6. 合入判定
+  3. 标题建议（`<类型>: <修改内容>`，且不含工具/agent 前缀；不作为硬性阻断项）
+  4. 描述完整性（对照 `.github/PULL_REQUEST_TEMPLATE.md`）
+  5. 验证证据
+  6. 实现正确性
+  7. 合入判定
 - 对 `fix` 类 PR，必须说明：原问题、根因、修复点、回归风险。
 - 合入阻断条件：
   - 正确性或安全性问题

@@ -37,6 +37,7 @@ export interface PortfolioPositionItem {
   lastPrice: number;
   marketValueBase: number;
   unrealizedPnlBase: number;
+  unrealizedPnlPct?: number | null;
   valuationCurrency: string;
   priceSource?: 'realtime_quote' | 'history_close' | 'missing' | string;
   priceProvider?: string | null;

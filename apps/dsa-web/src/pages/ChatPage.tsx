@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../utils/cn';
 import { agentApi } from '../api/agent';
+import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, Badge, Button, ConfirmDialog, EmptyState, InlineAlert, ScrollArea, Tooltip } from '../components/common';
 import { getParsedApiError } from '../api/error';
 import type { SkillInfo } from '../api/agent';
@@ -35,11 +36,24 @@ const QUICK_QUESTIONS = [
   { label: '用情绪周期分析东方财富', skill: 'emotion_cycle' },
 ];
 
+const MAX_SELECTED_SKILLS = 3;
+const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
+
+const getMessageSkillNames = (msg: Message): string[] => {
+  if (msg.skillNames?.length) return msg.skillNames;
+  if (msg.skillName) return [msg.skillName];
+  if (msg.skills?.length) return msg.skills;
+  if (msg.skill) return [msg.skill];
+  return [];
+};
+
+const getMessageSkillLabel = (msg: Message): string => getMessageSkillNames(msg).join('、');
+
 const ChatPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [input, setInput] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [selectedSkill, setSelectedSkill] = useState<string>('');
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [showSkillDesc, setShowSkillDesc] = useState<string | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -50,6 +64,12 @@ const ChatPage: React.FC = () => {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [contextCompressionEnabled, setContextCompressionEnabled] = useState(false);
+  const [contextCompressionLoaded, setContextCompressionLoaded] = useState(false);
+  const [contextCompressionSaving, setContextCompressionSaving] = useState(false);
+  const [contextCompressionConfigVersion, setContextCompressionConfigVersion] = useState('');
+  const [contextCompressionMaskToken, setContextCompressionMaskToken] = useState('******');
+  const [contextCompressionError, setContextCompressionError] = useState<string | null>(null);
   const [copiedMessages, setCopiedMessages] = useState<Set<string>>(new Set());
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const copyResetTimerRef = useRef<Partial<Record<string, number>>>({});
@@ -174,15 +194,116 @@ const ChatPage: React.FC = () => {
           res.default_skill_id ||
           res.skills[0]?.id ||
           '';
-        setSelectedSkill(defaultId);
+        setSelectedSkillIds(defaultId ? [defaultId] : []);
       })
       .catch((error) => {
         console.error('Failed to load chat skills:', error);
       });
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    void systemConfigApi.getConfig(false)
+      .then((config) => {
+        if (!active) {
+          return;
+        }
+        const enabledItem = config.items.find((item) => item.key === CONTEXT_COMPRESSION_CONFIG_KEY);
+        setContextCompressionEnabled(String(enabledItem?.value ?? '').trim().toLowerCase() === 'true');
+        setContextCompressionConfigVersion(config.configVersion);
+        setContextCompressionMaskToken(config.maskToken || '******');
+        setContextCompressionLoaded(true);
+        setContextCompressionError(null);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        const parsed = getParsedApiError(error);
+        setContextCompressionLoaded(false);
+        setContextCompressionError(parsed.message || '无法读取上下文压缩配置');
+        console.error('Failed to load context compression setting:', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const updateContextCompressionEnabled = useCallback(
+    async (nextEnabled: boolean) => {
+      if (!contextCompressionLoaded || contextCompressionSaving) {
+        return;
+      }
+
+      const previousEnabled = contextCompressionEnabled;
+      setContextCompressionEnabled(nextEnabled);
+      setContextCompressionSaving(true);
+      setContextCompressionError(null);
+
+      try {
+        const result = await systemConfigApi.update({
+          configVersion: contextCompressionConfigVersion,
+          maskToken: contextCompressionMaskToken,
+          reloadNow: true,
+          items: [
+            {
+              key: CONTEXT_COMPRESSION_CONFIG_KEY,
+              value: nextEnabled ? 'true' : 'false',
+            },
+          ],
+        });
+        setContextCompressionConfigVersion(result.configVersion || contextCompressionConfigVersion);
+      } catch (error) {
+        const parsed = getParsedApiError(error);
+        setContextCompressionEnabled(previousEnabled);
+        setContextCompressionError(parsed.message || '上下文压缩设置保存失败');
+      } finally {
+        setContextCompressionSaving(false);
+      }
+    },
+    [
+      contextCompressionConfigVersion,
+      contextCompressionEnabled,
+      contextCompressionLoaded,
+      contextCompressionMaskToken,
+      contextCompressionSaving,
+    ],
+  );
+
   const availableSkillIds = new Set(skills.map((skill) => skill.id));
   const quickQuestions = QUICK_QUESTIONS.filter((question) => availableSkillIds.size === 0 || availableSkillIds.has(question.skill));
+  const selectedSkillIdSet = new Set(selectedSkillIds);
+  const skillLimitReached = selectedSkillIds.length >= MAX_SELECTED_SKILLS;
+
+  const getSkillNames = useCallback(
+    (skillIds: string[]) => skillIds.map((id) => skills.find((s) => s.id === id)?.name || id),
+    [skills],
+  );
+
+  const normalizeSelectedSkillIds = useCallback((skillIds: string[]) => {
+    const normalized: string[] = [];
+    for (const skillId of skillIds) {
+      const cleaned = skillId.trim();
+      if (cleaned && !normalized.includes(cleaned)) {
+        normalized.push(cleaned);
+      }
+    }
+    return normalized.slice(0, MAX_SELECTED_SKILLS);
+  }, []);
+
+  const toggleSkillSelection = useCallback((skillId: string) => {
+    setSelectedSkillIds((prev) => {
+      if (prev.includes(skillId)) {
+        return prev.filter((id) => id !== skillId);
+      }
+      if (prev.length >= MAX_SELECTED_SKILLS) {
+        return prev;
+      }
+      return [...prev, skillId];
+    });
+  }, []);
 
   const handleStartNewChat = useCallback(() => {
     followUpContextRef.current = null;
@@ -250,18 +371,16 @@ const ChatPage: React.FC = () => {
   }, [searchParams, setSearchParams]);
 
   const handleSend = useCallback(
-    async (overrideMessage?: string, overrideSkill?: string) => {
-      const msgText = overrideMessage || input.trim();
+    async (overrideMessage?: string, overrideSkillIds?: string[]) => {
+      const msgText = (overrideMessage ?? input).trim();
       if (!msgText || loading) return;
-      const usedSkill = overrideSkill || selectedSkill;
-      const usedSkillName =
-        skills.find((s) => s.id === usedSkill)?.name ||
-        (usedSkill ? usedSkill : '通用');
+      const usedSkillIds = normalizeSelectedSkillIds(overrideSkillIds ?? selectedSkillIds);
+      const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
       const payload = {
         message: msgText,
         session_id: sessionId,
-        skills: usedSkill ? [usedSkill] : undefined,
+        ...(usedSkillIds.length > 0 ? { skills: usedSkillIds } : {}),
         context: followUpContextRef.current ?? undefined,
       };
       followUpHydrationTokenRef.current += 1;
@@ -270,9 +389,12 @@ const ChatPage: React.FC = () => {
 
       setInput('');
       requestScrollToBottom('smooth');
-      await startStream(payload, { skillName: usedSkillName });
+      await startStream(payload, {
+        skillNames: usedSkillNames,
+        skillName: usedSkillNames.join('、'),
+      });
     },
-    [input, loading, requestScrollToBottom, selectedSkill, skills, sessionId, startStream],
+    [getSkillNames, input, loading, normalizeSelectedSkillIds, requestScrollToBottom, selectedSkillIds, sessionId, startStream],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -283,8 +405,8 @@ const ChatPage: React.FC = () => {
   };
 
   const handleQuickQuestion = (q: (typeof QUICK_QUESTIONS)[0]) => {
-    setSelectedSkill(q.skill);
-    handleSend(q.label, q.skill);
+    setSelectedSkillIds([q.skill]);
+    handleSend(q.label, [q.skill]);
   };
 
   const showSendFeedback = useCallback((nextToast: { type: 'success' | 'error'; message: string }, durationMs: number) => {
@@ -329,7 +451,8 @@ const ChatPage: React.FC = () => {
   };
 
   const downloadMessageAsMarkdown = useCallback((msg: Message) => {
-    const heading = msg.role === 'user' ? '# 用户消息' : `# AI 回复${msg.skillName ? ` · ${msg.skillName}` : ''}`;
+    const skillLabel = getMessageSkillLabel(msg);
+    const heading = msg.role === 'user' ? '# 用户消息' : `# AI 回复${skillLabel ? ` · ${skillLabel}` : ''}`;
     const content = [heading, '', msg.content].join('\n');
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -762,7 +885,9 @@ const ChatPage: React.FC = () => {
                 />
               </div>
             ) : (
-              messages.map((msg) => (
+              messages.map((msg) => {
+                const skillLabel = getMessageSkillLabel(msg);
+                return (
                 <div
                   key={msg.id}
                   className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
@@ -781,9 +906,9 @@ const ChatPage: React.FC = () => {
                       msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
                     )}
                   >
-                    {msg.role === 'assistant' && msg.skillName && (
+                    {msg.role === 'assistant' && skillLabel && (
                       <div className="mb-2">
-                        <Badge variant="info" className="chat-skill-badge shadow-none" aria-label={`技能 ${msg.skillName}`}>
+                        <Badge variant="info" className="chat-skill-badge shadow-none" aria-label={`技能 ${skillLabel}`}>
                           <svg
                             className="w-3 h-3"
                             fill="none"
@@ -797,7 +922,7 @@ const ChatPage: React.FC = () => {
                               d="M13 10V3L4 14h7v7l9-11h-7z"
                             />
                           </svg>
-                          {msg.skillName}
+                          {skillLabel}
                         </Badge>
                       </div>
                     )}
@@ -846,7 +971,8 @@ const ChatPage: React.FC = () => {
                     )}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
 
             {loading && (
@@ -912,6 +1038,41 @@ const ChatPage: React.FC = () => {
                   className="rounded-xl px-3 py-2 text-xs shadow-none"
                 />
               ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-surface/25 px-3 py-2">
+                <label
+                  className={cn(
+                    'inline-flex items-center gap-2 text-sm',
+                    contextCompressionLoaded && !contextCompressionSaving
+                      ? 'cursor-pointer text-foreground'
+                      : 'cursor-not-allowed text-muted-text',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={contextCompressionEnabled}
+                    disabled={!contextCompressionLoaded || contextCompressionSaving}
+                    onChange={(event) => void updateContextCompressionEnabled(event.target.checked)}
+                    className="chat-skill-checkbox"
+                  />
+                  <span className="font-medium">上下文压缩</span>
+                  <span className="text-xs text-muted-text">节省长会话 token</span>
+                </label>
+                <span className="text-xs text-muted-text">
+                  {contextCompressionSaving
+                    ? '保存中...'
+                    : contextCompressionEnabled
+                      ? '已启用'
+                      : '未启用'}
+                </span>
+              </div>
+              {contextCompressionError ? (
+                <InlineAlert
+                  variant="danger"
+                  title="上下文压缩设置未保存"
+                  message={contextCompressionError}
+                  className="rounded-xl px-3 py-2 text-xs shadow-none"
+                />
+              ) : null}
             {skills.length > 0 && (
               <div className="flex flex-wrap items-start gap-x-5 gap-y-2">
                 <span className="text-xs text-muted-text font-medium uppercase tracking-wider flex-shrink-0 mt-1">
@@ -919,47 +1080,52 @@ const ChatPage: React.FC = () => {
                 </span>
                 <label className="flex items-center gap-1.5 text-sm cursor-pointer group mt-0.5">
                   <input
-                    type="radio"
-                    name="skill"
+                    type="checkbox"
+                    name="general-analysis"
                     value=""
-                    checked={selectedSkill === ''}
-                    onChange={() => setSelectedSkill('')}
-                    className="chat-skill-radio"
+                    checked={selectedSkillIds.length === 0}
+                    onChange={() => setSelectedSkillIds([])}
+                    className="chat-skill-checkbox"
                   />
                   <span
-                    className={`transition-colors text-sm ${selectedSkill === '' ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
+                    className={`transition-colors text-sm ${selectedSkillIds.length === 0 ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
                   >
                     通用分析
                   </span>
                 </label>
-                {skills.map((s) => (
-                  <label
-                    key={s.id}
-                    className="flex items-center gap-1.5 cursor-pointer group relative mt-0.5"
-                    onMouseEnter={() => setShowSkillDesc(s.id)}
-                    onMouseLeave={() => setShowSkillDesc(null)}
-                  >
-                    <input
-                      type="radio"
-                      name="skill"
-                      value={s.id}
-                      checked={selectedSkill === s.id}
-                      onChange={() => setSelectedSkill(s.id)}
-                      className="chat-skill-radio"
-                    />
-                    <span
-                      className={`transition-colors text-sm ${selectedSkill === s.id ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
+                {skills.map((s) => {
+                  const checked = selectedSkillIdSet.has(s.id);
+                  const disabled = !checked && skillLimitReached;
+                  return (
+                    <label
+                      key={s.id}
+                      className={`flex items-center gap-1.5 cursor-pointer group relative mt-0.5 ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      onMouseEnter={() => setShowSkillDesc(s.id)}
+                      onMouseLeave={() => setShowSkillDesc(null)}
                     >
-                      {s.name}
-                    </span>
-                    {showSkillDesc === s.id && s.description && (
-                      <div className="skill-desc-tooltip">
-                        <p className="skill-title">{s.name}</p>
-                        <p>{s.description}</p>
-                      </div>
-                    )}
-                  </label>
-                ))}
+                      <input
+                        type="checkbox"
+                        name="skills"
+                        value={s.id}
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={() => toggleSkillSelection(s.id)}
+                        className="chat-skill-checkbox"
+                      />
+                      <span
+                        className={`transition-colors text-sm ${checked ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
+                      >
+                        {s.name}
+                      </span>
+                      {showSkillDesc === s.id && s.description && (
+                        <div className="skill-desc-tooltip">
+                          <p className="skill-title">{s.name}</p>
+                          <p>{s.description}</p>
+                        </div>
+                      )}
+                    </label>
+                  );
+                })}
               </div>
             )}
 

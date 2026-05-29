@@ -31,6 +31,7 @@ for optional_module in ("litellm", "json_repair"):
 
 from src.config import Config
 from src.notification import NotificationService, NotificationChannel
+from src.notification_noise import reset_notification_noise_state
 from src.analyzer import AnalysisResult
 import requests
 
@@ -77,6 +78,9 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
 
     """
 
+    def setUp(self):
+        reset_notification_noise_state()
+
     @mock.patch("src.notification.get_config")
     def test_no_channels_service_unavailable_and_send_returns_false(self, mock_get_config):
         mock_get_config.return_value = _make_config()
@@ -118,6 +122,234 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
 
         self.assertTrue(ok)
         mock_post.assert_called_once()
+
+    @mock.patch("src.notification.get_config")
+    def test_send_isolates_channel_exceptions(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            wechat_webhook_url="https://wechat.example/hook",
+            custom_webhook_urls=["https://example.com/webhook"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+        self.assertIn(NotificationChannel.WECHAT, service.get_available_channels())
+        self.assertIn(NotificationChannel.CUSTOM, service.get_available_channels())
+
+        with mock.patch.object(service, "send_to_wechat", side_effect=RuntimeError("boom")), \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content")
+
+        self.assertTrue(ok)
+        mock_custom.assert_called_once_with("content")
+
+    @mock.patch("src.notification.get_config")
+    def test_send_with_results_reports_per_channel_attempts(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            wechat_webhook_url="https://wechat.example/hook",
+            custom_webhook_urls=["https://example.com/webhook"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_wechat", side_effect=RuntimeError("token=secret-token failed")), \
+             mock.patch.object(service, "send_to_custom", return_value=True):
+            result = service.send_with_results("content")
+
+        self.assertTrue(result.dispatched)
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "partial_failed")
+        by_channel = {item.channel: item for item in result.channel_results}
+        self.assertFalse(by_channel["wechat"].success)
+        self.assertEqual(by_channel["wechat"].error_code, "exception")
+        self.assertNotIn("secret-token", by_channel["wechat"].diagnostics)
+        self.assertTrue(by_channel["custom"].success)
+
+    @mock.patch("src.notification.get_config")
+    def test_send_with_results_reports_route_no_channel(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_report_channels=["unknown-route-channel"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            result = service.send_with_results("content", route_type="report")
+
+        self.assertFalse(result.dispatched)
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "no_channel")
+        self.assertEqual(result.channel_results, [])
+        mock_custom.assert_not_called()
+
+    @mock.patch("src.notification.get_config")
+    def test_send_route_empty_keeps_all_configured_channels(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            wechat_webhook_url="https://wechat.example/hook",
+            custom_webhook_urls=["https://example.com/webhook"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_wechat", return_value=True) as mock_wechat, \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content", route_type="report")
+
+        self.assertTrue(ok)
+        mock_wechat.assert_called_once_with("content")
+        mock_custom.assert_called_once_with("content")
+
+    @mock.patch("src.notification.get_config")
+    def test_send_report_route_filters_static_channels(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            wechat_webhook_url="https://wechat.example/hook",
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_report_channels=["custom"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_wechat", return_value=True) as mock_wechat, \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content", route_type="report")
+
+        self.assertTrue(ok)
+        mock_wechat.assert_not_called()
+        mock_custom.assert_called_once_with("content")
+
+    @mock.patch("src.notification.get_config")
+    def test_send_alert_and_system_error_routes_filter_independently(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            wechat_webhook_url="https://wechat.example/hook",
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_alert_channels=["wechat"],
+            notification_system_error_channels=["custom"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_wechat", return_value=True) as mock_wechat, \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            self.assertTrue(service.send("alert", route_type="alert"))
+            self.assertTrue(service.send("system", route_type="system_error"))
+
+        mock_wechat.assert_called_once_with("alert")
+        mock_custom.assert_called_once_with("system")
+
+    @mock.patch("src.notification.get_config")
+    def test_send_route_with_no_matching_channel_does_not_fallback(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_report_channels=["unknown-route-channel"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content", route_type="report")
+
+        self.assertFalse(ok)
+        mock_custom.assert_not_called()
+
+    @mock.patch("src.notification.get_config")
+    def test_send_to_context_is_not_limited_by_route(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_report_channels=["telegram"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_context", return_value=True) as mock_context, \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content", route_type="report")
+
+        self.assertTrue(ok)
+        mock_context.assert_called_once_with("content")
+        mock_custom.assert_not_called()
+
+    @mock.patch("src.notification.get_config")
+    def test_send_dedup_suppresses_static_channels_after_success(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_dedup_ttl_seconds=60,
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            self.assertTrue(service.send("content at 12:00", route_type="report", dedup_key="report:aggregate:simple:600519"))
+            self.assertFalse(service.send("content at 12:01", route_type="report", dedup_key="report:aggregate:simple:600519"))
+
+        mock_custom.assert_called_once_with("content at 12:00")
+
+    @mock.patch("src.notification.get_config")
+    def test_send_releases_noise_reservation_when_static_channels_fail(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_dedup_ttl_seconds=60,
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_custom", side_effect=[False, True]) as mock_custom:
+            self.assertFalse(
+                service.send(
+                    "content at 12:00",
+                    route_type="report",
+                    dedup_key="report:aggregate:simple:600519",
+                )
+            )
+            self.assertTrue(
+                service.send(
+                    "content at 12:01",
+                    route_type="report",
+                    dedup_key="report:aggregate:simple:600519",
+                )
+            )
+
+        self.assertEqual(mock_custom.call_count, 2)
+
+    @mock.patch("src.notification.get_config")
+    def test_send_to_context_is_not_limited_by_noise_controls(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_dedup_ttl_seconds=60,
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_context", return_value=True) as mock_context, \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            self.assertTrue(service.send("content at 12:00", route_type="report", dedup_key="report:aggregate:simple:600519"))
+            self.assertTrue(service.send("content at 12:01", route_type="report", dedup_key="report:aggregate:simple:600519"))
+
+        self.assertEqual(mock_context.call_count, 2)
+        mock_custom.assert_called_once_with("content at 12:00")
+
+    @mock.patch("src.notification.get_config")
+    def test_noise_check_failure_does_not_block_static_send(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(custom_webhook_urls=["https://example.com/webhook"])
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch("src.notification_noise._evaluate_notification_noise", side_effect=RuntimeError("boom")), \
+             mock.patch.object(service, "send_to_custom", return_value=True) as mock_custom:
+            ok = service.send("content", route_type="report")
+
+        self.assertTrue(ok)
+        mock_custom.assert_called_once_with("content")
 
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
@@ -221,6 +453,95 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("600519", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_brief_report_shows_model_by_default(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            model_used="gemini/gemini-2.5-flash",
+        )
+
+        out = service.generate_brief_report([result], report_date="2026-02-01")
+
+        self.assertIn("*分析模型: gemini/gemini-2.5-flash*", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_shows_model_by_default(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            model_used="gemini/gemini-2.5-flash",
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-02-01")
+
+        self.assertIn("*分析模型：gemini/gemini-2.5-flash*", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_collapses_unavailable_chip_structure(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "profit_ratio": "数据缺失，无法判断",
+                        "avg_cost": "数据缺失，无法判断",
+                        "concentration": "数据缺失，无法判断",
+                        "chip_health": "数据缺失，无法判断",
+                    }
+                }
+            },
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-02-01")
+
+        self.assertIn("**筹码**: 筹码分布未启用或数据源暂不可用，未纳入筹码判断。", out)
+        self.assertEqual(out.count("数据缺失，无法判断"), 0)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_reports_hide_model_when_disabled(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(
+            report_renderer_enabled=False,
+            report_show_llm_model=False,
+        )
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            model_used="gemini/gemini-2.5-flash",
+        )
+
+        dashboard = service.generate_dashboard_report([result], report_date="2026-02-01")
+        single = service.generate_single_stock_report(result)
+
+        self.assertNotIn("分析模型", dashboard)
+        self.assertNotIn("gemini/gemini-2.5-flash", dashboard)
+        self.assertNotIn("分析模型", single)
+        self.assertNotIn("gemini/gemini-2.5-flash", single)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_localizes_english_fallback(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="en")
         service = NotificationService()
@@ -321,6 +642,423 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("Core Conclusion", out)
         self.assertIn("Action Levels", out)
         self.assertIn("Hold", out)
+
+    def _make_fundamental_context(self) -> dict:
+        return {
+            "earnings": {
+                "status": "ok",
+                "data": {
+                    "financial_report": {
+                        "report_date": "2024-09-30",
+                        "revenue": 1_236_000_000_000.0,  # 1.236 万亿 -> 12360.00 亿元
+                        "net_profit_parent": 60_800_000_000.0,
+                        "operating_cash_flow": 72_500_000_000.0,
+                        "roe": 22.45,
+                    },
+                    "dividend": {
+                        "events": [
+                            {
+                                "event_date": "2024-06-26",
+                                "ex_dividend_date": "2024-06-26",
+                                "cash_dividend_per_share": 30.876,
+                                "is_pre_tax": True,
+                            }
+                        ],
+                        "ttm_event_count": 1,
+                        "ttm_cash_dividend_per_share": 30.876,
+                        "ttm_dividend_yield_pct": 1.85,
+                    },
+                },
+            },
+            "growth": {
+                "status": "ok",
+                "data": {
+                    "revenue_yoy": 15.23,
+                    "net_profit_yoy": 19.87,
+                    "roe": 22.45,
+                    "gross_margin": 91.55,
+                },
+            },
+            "boards": {
+                "status": "ok",
+                "data": {
+                    "top": [
+                        {"name": "白酒", "change_pct": 3.42},
+                        {"name": "食品饮料", "change_pct": 2.10},
+                    ],
+                    "bottom": [
+                        {"name": "光伏设备", "change_pct": -2.65},
+                    ],
+                },
+            },
+            "belong_boards": [
+                {"name": "白酒", "code": "BK0596", "type": "行业"},
+                {"name": "MSCI中国", "code": "BK0805", "type": "概念"},
+            ],
+        }
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_single_stock_report_appends_fundamental_blocks(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+        result.fundamental_context = self._make_fundamental_context()
+
+        out = service.generate_single_stock_report(result)
+
+        # 财务摘要
+        self.assertIn("财务摘要", out)
+        self.assertIn("2024-09-30", out)
+        self.assertIn("12360.00 亿元", out)
+        self.assertIn("22.45%", out)
+        self.assertIn("15.23%", out)
+        self.assertIn("91.55%", out)
+        # 股东回报
+        self.assertIn("股东回报", out)
+        self.assertIn("30.8760 元", out)
+        self.assertIn("1.85%", out)
+        self.assertIn("2024-06-26", out)
+        # 关联板块（白酒带 sector 信号；MSCI中国 不在榜单 -> "--"）
+        self.assertIn("关联板块", out)
+        self.assertIn("白酒", out)
+        self.assertIn("领涨", out)
+        self.assertIn("+3.42%", out)
+        self.assertIn("MSCI中国", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_single_stock_report_skips_fundamental_blocks_when_missing(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+
+        out = service.generate_single_stock_report(result)
+
+        self.assertNotIn("财务摘要", out)
+        self.assertNotIn("股东回报", out)
+        self.assertNotIn("关联板块", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_single_stock_report_handles_partial_fundamental_context(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """Only dividend data present — render shareholder return, skip the other two."""
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+        result.fundamental_context = {
+            "earnings": {
+                "status": "partial",
+                "data": {
+                    "dividend": {
+                        "events": [],
+                        "ttm_event_count": 0,
+                        "ttm_cash_dividend_per_share": 0.5,
+                    }
+                },
+            },
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        self.assertNotIn("财务摘要", out)
+        self.assertIn("股东回报", out)
+        self.assertIn("0.5000 元", out)
+        self.assertNotIn("关联板块", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_single_stock_report_uses_currency_for_us(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """USD currency on financial_report yields 亿美元 suffix instead of 亿元."""
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="AAPL",
+            name="Apple Inc.",
+            sentiment_score=64,
+            trend_prediction="震荡",
+            operation_advice="观望",
+            analysis_summary="观望等待 AI 兑现节奏。",
+        )
+        result.fundamental_context = {
+            "earnings": {
+                "status": "ok",
+                "data": {
+                    "financial_report": {
+                        "report_date": "2026-03-31",
+                        "revenue": 1.11e11,
+                        "net_profit_parent": 2.95e10,
+                        "operating_cash_flow": 2.87e10,
+                        "roe": 141.47,
+                        "currency": "USD",
+                    },
+                    "dividend": {
+                        "events": [{
+                            "event_date": "2026-05-11",
+                            "ex_dividend_date": "2026-05-11",
+                            "cash_dividend_per_share": 0.27,
+                            "is_pre_tax": True,
+                        }],
+                        "ttm_event_count": 4,
+                        "ttm_cash_dividend_per_share": 1.05,
+                        "ttm_dividend_yield_pct": 0.36,
+                    },
+                },
+            },
+            "growth": {"status": "ok", "data": {"revenue_yoy": 16.60, "roe": 141.47, "gross_margin": 47.86}},
+            "belong_boards": [
+                {"name": "Technology", "type": "行业"},
+                {"name": "Consumer Electronics", "type": "概念"},
+            ],
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        self.assertIn("财务摘要", out)
+        self.assertIn("亿美元", out)
+        self.assertNotIn("12360.00 亿元", out)
+        # Sample expected formatted values
+        self.assertIn("1110.00 亿美元", out)
+        self.assertIn("141.47%", out)
+        # Dividend per share also picks up currency suffix
+        self.assertIn("1.0500 美元", out)
+        # Sector + industry render as belong_boards
+        self.assertIn("Technology", out)
+        self.assertIn("Consumer Electronics", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_related_boards_drops_signal_columns_when_no_sector_data(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """HK/US lack 板块涨跌榜 — drop status / change_pct columns entirely."""
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="AAPL",
+            name="Apple Inc.",
+            sentiment_score=64,
+            trend_prediction="震荡",
+            operation_advice="观望",
+            analysis_summary="观望等待 AI 兑现节奏。",
+        )
+        result.fundamental_context = {
+            "earnings": {"status": "ok", "data": {
+                "financial_report": {
+                    "report_date": "2026-03-31",
+                    "revenue": 1.11e11,
+                    "currency": "USD",
+                },
+            }},
+            "growth": {"status": "ok", "data": {"revenue_yoy": 16.60}},
+            "belong_boards": [
+                {"name": "Technology", "type": "行业"},
+                {"name": "Consumer Electronics", "type": "概念"},
+            ],
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        self.assertIn("关联板块", out)
+        self.assertIn("Technology", out)
+        self.assertIn("Consumer Electronics", out)
+        # When no sector ranking data is available, drop the 4-col layout.
+        self.assertNotIn("板块表现", out)
+        self.assertNotIn("板块涨跌幅", out)
+        # And no leftover "--" cells either.
+        self.assertNotIn("| -- | -- |", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_related_boards_keeps_signal_columns_when_any_board_has_data(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """When at least one belong_board lines up with a sector ranking, keep 4-col layout."""
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+        result.fundamental_context = {
+            "earnings": {"status": "ok", "data": {}},
+            "growth": {"status": "ok", "data": {}},
+            "boards": {"status": "ok", "data": {
+                "top": [{"name": "白酒", "change_pct": 3.42}],
+                "bottom": [],
+            }},
+            "belong_boards": [
+                {"name": "白酒", "code": "BK0596", "type": "行业"},
+                {"name": "MSCI中国", "code": "BK0805", "type": "概念"},
+            ],
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        self.assertIn("板块表现", out)
+        self.assertIn("板块涨跌幅", out)
+        self.assertIn("领涨", out)
+        self.assertIn("+3.42%", out)
+        # MSCI中国 falls back to "--" — that's expected for the row without rank data.
+        self.assertIn("MSCI中国", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_single_stock_report_uses_currency_for_hk(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """HK ADRs have financialCurrency=CNY but trade/pay dividends in HKD.
+
+        The financial summary must render in 元 (CNY income statement) while
+        dividends must render in 港元 — they are NOT the same currency on
+        yfinance HK payloads, so the renderer must read each block's own
+        ``currency`` field rather than assuming a single global currency.
+        """
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="HK09988",
+            name="阿里巴巴-W",
+            sentiment_score=68,
+            trend_prediction="看多",
+            operation_advice="逢低买入",
+            analysis_summary="云业务回正，回购持续。",
+        )
+        result.fundamental_context = {
+            "earnings": {
+                "status": "ok",
+                "data": {
+                    "financial_report": {
+                        "report_date": "2026-03-31",
+                        "revenue": 1.02e12,
+                        "net_profit_parent": 1.04e11,
+                        "operating_cash_flow": 3.6e10,
+                        "roe": 9.22,
+                        "currency": "CNY",
+                    },
+                    "dividend": {
+                        "events": [{
+                            "event_date": "2025-06-11",
+                            "ex_dividend_date": "2025-06-11",
+                            "cash_dividend_per_share": 1.95812,
+                            "is_pre_tax": True,
+                        }],
+                        "ttm_event_count": 1,
+                        "ttm_cash_dividend_per_share": 1.95812,
+                        "ttm_dividend_yield_pct": 1.75,
+                        "currency": "HKD",
+                    },
+                },
+            },
+            "growth": {"status": "ok", "data": {"revenue_yoy": 2.9, "roe": 9.22, "gross_margin": 39.81}},
+            "belong_boards": [
+                {"name": "Consumer Cyclical", "type": "行业"},
+                {"name": "Internet Retail", "type": "概念"},
+            ],
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        # Income statement still rendered in CNY (financialCurrency).
+        self.assertIn("10200.00 亿元", out)
+        # Dividend per share follows the dividend currency, NOT the financial currency.
+        self.assertIn("1.9581 港元", out)
+        self.assertNotIn("1.9581 元 ", out)
+        self.assertIn("Consumer Cyclical", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_dividend_currency_falls_back_to_financial_when_missing(
+        self, mock_get_config: mock.MagicMock
+    ):
+        """A-share AkShare payload has no dividend.currency — fall back to financial_report.currency."""
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+        result.fundamental_context = {
+            "earnings": {
+                "status": "ok",
+                "data": {
+                    "financial_report": {"report_date": "2026-03-31", "revenue": 4.5e10},
+                    "dividend": {
+                        "events": [{"event_date": "2025-06-20", "ex_dividend_date": "2025-06-20"}],
+                        "ttm_event_count": 1,
+                        "ttm_cash_dividend_per_share": 27.6,
+                    },
+                },
+            },
+        }
+
+        out = service.generate_single_stock_report(result)
+
+        # Without explicit dividend currency, default to 元 (matches AkShare A-share semantics).
+        self.assertIn("27.6000 元", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_appends_fundamental_blocks(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            dashboard={
+                "core_conclusion": {"one_sentence": "稳健持有"},
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "1600",
+                        "stop_loss": "1500",
+                        "take_profit": "1800",
+                    }
+                },
+            },
+        )
+        result.fundamental_context = self._make_fundamental_context()
+
+        out = service.generate_dashboard_report([result], report_date="2026-05-20")
+
+        self.assertIn("财务摘要", out)
+        self.assertIn("股东回报", out)
+        self.assertIn("关联板块", out)
+        self.assertIn("白酒", out)
+        self.assertIn("领涨", out)
 
     @mock.patch("src.notification.get_config")
     def test_history_compare_context_uses_cache(self, mock_get_config: mock.MagicMock):
@@ -423,6 +1161,143 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertAlmostEqual(mock_post.call_count, 4, delta=1)
+
+    @mock.patch("src.notification.get_config")
+    @mock.patch("requests.post")
+    def test_send_to_gotify_via_notification_service(
+        self, mock_post: mock.MagicMock, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(gotify_url="https://gotify.example", gotify_token="secret-token")
+        mock_get_config.return_value = cfg
+        mock_post.return_value = _make_response(200)
+
+        service = NotificationService()
+        self.assertIn(NotificationChannel.GOTIFY, service.get_available_channels())
+
+        ok = service.send("gotify content")
+
+        self.assertTrue(ok)
+        mock_post.assert_called_once()
+        self.assertEqual(mock_post.call_args.args[0], "https://gotify.example/message")
+        self.assertEqual(mock_post.call_args.kwargs["headers"]["X-Gotify-Key"], "secret-token")
+        self.assertEqual(mock_post.call_args.kwargs["json"]["message"], "gotify content")
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["extras"]["client::display"]["contentType"],
+            "text/markdown",
+        )
+
+    @mock.patch("src.notification.get_config")
+    def test_gotify_without_token_is_not_available(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(gotify_url="https://gotify.example")
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.GOTIFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
+    def test_gotify_blank_token_is_not_available(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(
+            gotify_url="https://gotify.example",
+            gotify_token="   ",
+        )
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.GOTIFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
+    def test_gotify_message_endpoint_is_not_available(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(
+            gotify_url="https://gotify.example/message",
+            gotify_token="secret-token",
+        )
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.GOTIFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
+    @mock.patch("requests.post")
+    def test_send_to_gotify_does_not_trigger_markdown_to_image(
+        self, mock_post: mock.MagicMock, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(
+            gotify_url="https://gotify.example",
+            gotify_token="secret-token",
+            markdown_to_image_channels=["gotify"],
+        )
+        mock_get_config.return_value = cfg
+        mock_post.return_value = _make_response(200)
+
+        service = NotificationService()
+        with mock.patch("src.md2img.markdown_to_image", return_value=b"png") as mock_md2img:
+            ok = service.send("gotify content")
+
+        self.assertTrue(ok)
+        mock_md2img.assert_not_called()
+        mock_post.assert_called_once()
+
+    @mock.patch("src.notification.get_config")
+    @mock.patch("requests.post")
+    def test_send_to_ntfy_via_notification_service(
+        self, mock_post: mock.MagicMock, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(ntfy_url="https://ntfy.sh/dsa-topic")
+        mock_get_config.return_value = cfg
+        mock_post.return_value = _make_response(200)
+
+        service = NotificationService()
+        self.assertIn(NotificationChannel.NTFY, service.get_available_channels())
+
+        ok = service.send("ntfy content")
+
+        self.assertTrue(ok)
+        mock_post.assert_called_once()
+        self.assertEqual(mock_post.call_args.args[0], "https://ntfy.sh")
+        self.assertEqual(mock_post.call_args.kwargs["json"]["topic"], "dsa-topic")
+
+    @mock.patch("src.notification.get_config")
+    def test_ntfy_url_without_topic_is_not_available(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(ntfy_url="https://ntfy.sh")
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.NTFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
+    def test_ntfy_url_with_unsupported_scheme_is_not_available(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(ntfy_url="ntfy://ntfy.sh/dsa-topic")
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.NTFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
+    @mock.patch("requests.post")
+    def test_send_to_ntfy_does_not_trigger_markdown_to_image(
+        self, mock_post: mock.MagicMock, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(
+            ntfy_url="https://ntfy.sh/dsa-topic",
+            markdown_to_image_channels=["ntfy"],
+        )
+        mock_get_config.return_value = cfg
+        mock_post.return_value = _make_response(200)
+
+        service = NotificationService()
+        with mock.patch("src.md2img.markdown_to_image", return_value=b"png") as mock_md2img:
+            ok = service.send("ntfy content")
+
+        self.assertTrue(ok)
+        mock_md2img.assert_not_called()
+        mock_post.assert_called_once()
 
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")

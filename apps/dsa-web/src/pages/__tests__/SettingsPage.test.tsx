@@ -5,10 +5,11 @@ import { resolveWebBuildInfo } from '../../utils/constants';
 import SettingsPage from '../SettingsPage';
 
 const {
-  exportDesktopEnv,
-  importDesktopEnv,
+  exportEnv,
+  importEnv,
   desktopCheckForUpdates,
   desktopGetUpdateState,
+  desktopInstallDownloadedUpdate,
   desktopOnUpdateStateChange,
   desktopOpenReleasePage,
   load,
@@ -20,14 +21,16 @@ const {
   applyPartialUpdate,
   refreshAfterExternalSave,
   refreshStatus,
+  settingsPanelErrorBoundary,
   useAuthMock,
   useSystemConfigMock,
   webBuildInfoMock,
 } = vi.hoisted(() => ({
-  exportDesktopEnv: vi.fn(),
-  importDesktopEnv: vi.fn(),
+  exportEnv: vi.fn(),
+  importEnv: vi.fn(),
   desktopCheckForUpdates: vi.fn(),
   desktopGetUpdateState: vi.fn(),
+  desktopInstallDownloadedUpdate: vi.fn(),
   desktopOnUpdateStateChange: vi.fn(),
   desktopOpenReleasePage: vi.fn(),
   load: vi.fn(),
@@ -39,6 +42,7 @@ const {
   applyPartialUpdate: vi.fn(),
   refreshAfterExternalSave: vi.fn(),
   refreshStatus: vi.fn(),
+  settingsPanelErrorBoundary: vi.fn(),
   useAuthMock: vi.fn(),
   useSystemConfigMock: vi.fn(),
   webBuildInfoMock: {
@@ -59,8 +63,8 @@ vi.mock('../../hooks', () => ({
 
 vi.mock('../../api/systemConfig', () => ({
   systemConfigApi: {
-    exportDesktopEnv: (...args: unknown[]) => exportDesktopEnv(...args),
-    importDesktopEnv: (...args: unknown[]) => importDesktopEnv(...args),
+    exportEnv: (...args: unknown[]) => exportEnv(...args),
+    importEnv: (...args: unknown[]) => importEnv(...args),
   },
 }));
 
@@ -91,6 +95,9 @@ vi.mock('../../components/settings', () => ({
     >
       save llm channels
     </button>
+  ),
+  NotificationTestPanel: ({ items }: { items: Array<{ key: string; value: string }> }) => (
+    <div>通知测试面板:{items.map((item) => item.key).join(',')}</div>
   ),
   SettingsAlert: ({
     title,
@@ -134,8 +141,45 @@ vi.mock('../../components/settings', () => ({
       ))}
     </nav>
   ),
-  SettingsField: ({ item }: { item: { key: string } }) => <div>{item.key}</div>,
+  SettingsField: ({
+    item,
+  }: {
+    item: {
+      key: string;
+      schema?: {
+        description?: string;
+        options?: Array<string | { label: string; value: string }>;
+      };
+    };
+  }) => (
+    <div>
+      <div>{item.key}</div>
+      {item.schema?.description ? <p>{item.schema.description}</p> : null}
+      {item.schema?.options?.map((option) => {
+        const label = typeof option === 'string' ? option : option.label;
+        const value = typeof option === 'string' ? option : option.value;
+        return <span key={`${item.key}-${value}`}>{label}</span>;
+      })}
+    </div>
+  ),
   SettingsLoading: () => <div>loading</div>,
+  SettingsPanelErrorBoundary: ({
+    title,
+    diagnosticHint,
+    children,
+  }: {
+    title: string;
+    diagnosticHint?: React.ReactNode;
+    children: React.ReactNode;
+  }) => {
+    settingsPanelErrorBoundary(title);
+    return (
+      <>
+        {diagnosticHint ? <div>{diagnosticHint}</div> : null}
+        {children}
+      </>
+    );
+  },
   SettingsSectionCard: ({
     title,
     description,
@@ -158,6 +202,7 @@ function createDesktopRuntime(overrides: Record<string, unknown> = {}) {
     version: '3.12.0',
     getUpdateState: desktopGetUpdateState,
     checkForUpdates: desktopCheckForUpdates,
+    installDownloadedUpdate: desktopInstallDownloadedUpdate,
     openReleasePage: desktopOpenReleasePage,
     onUpdateStateChange: desktopOnUpdateStateChange,
     ...overrides,
@@ -168,7 +213,8 @@ const baseCategories = [
   { category: 'system', title: 'System', description: '系统设置', displayOrder: 1, fields: [] },
   { category: 'base', title: 'Base', description: '基础配置', displayOrder: 2, fields: [] },
   { category: 'ai_model', title: 'AI', description: '模型配置', displayOrder: 3, fields: [] },
-  { category: 'agent', title: 'Agent', description: 'Agent 配置', displayOrder: 4, fields: [] },
+  { category: 'notification', title: 'Notification', description: '通知配置', displayOrder: 4, fields: [] },
+  { category: 'agent', title: 'Agent', description: 'Agent 配置', displayOrder: 5, fields: [] },
 ];
 
 type ConfigState = {
@@ -283,6 +329,26 @@ function buildSystemConfigState(overrides: ConfigOverride = {}) {
           },
         },
       ],
+      notification: [
+        {
+          key: 'WECHAT_WEBHOOK_URL',
+          value: 'https://qyapi.example.com/hook',
+          rawValueExists: true,
+          isMasked: false,
+          schema: {
+            key: 'WECHAT_WEBHOOK_URL',
+            category: 'notification',
+            dataType: 'string',
+            uiControl: 'password',
+            isSensitive: true,
+            isRequired: false,
+            isEditable: true,
+            options: [],
+            validation: {},
+            displayOrder: 1,
+          },
+        },
+      ],
     },
     issueByKey: {},
     activeCategory: 'system',
@@ -321,12 +387,12 @@ describe('SettingsPage', () => {
       isFallbackVersion: false,
     });
     load.mockResolvedValue(true);
-    exportDesktopEnv.mockResolvedValue({
+    exportEnv.mockResolvedValue({
       content: 'STOCK_LIST=600519\n',
       configVersion: 'v1',
       updatedAt: '2026-03-21T00:00:00Z',
     });
-    importDesktopEnv.mockResolvedValue({
+    importEnv.mockResolvedValue({
       success: true,
       configVersion: 'v2',
       appliedCount: 1,
@@ -347,6 +413,7 @@ describe('SettingsPage', () => {
       latestVersion: '3.12.0',
       message: '当前桌面端已是最新版本。',
     });
+    desktopInstallDownloadedUpdate.mockResolvedValue(true);
     desktopOpenReleasePage.mockResolvedValue(true);
     desktopOnUpdateStateChange.mockImplementation(() => () => undefined);
     useAuthMock.mockReturnValue({
@@ -550,6 +617,90 @@ describe('SettingsPage', () => {
     expect(screen.getByText('AGENT_ORCHESTRATOR_TIMEOUT_S')).toBeInTheDocument();
     expect(screen.getByText('AGENT_DEEP_RESEARCH_BUDGET')).toBeInTheDocument();
     expect(screen.getByText('AGENT_EVENT_MONITOR_ENABLED')).toBeInTheDocument();
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('Agent 设置');
+  });
+
+  it('renders context compression profile labels and blank preset guidance in agent settings', () => {
+    const configState = buildSystemConfigState();
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'agent',
+      itemsByCategory: {
+        ...configState.itemsByCategory,
+        agent: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+            value: 'balanced',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+              category: 'agent',
+              dataType: 'string',
+              uiControl: 'select',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [
+                { label: '成本优先', value: 'cost' },
+                { label: '均衡推荐', value: 'balanced' },
+                { label: '长上下文原文优先', value: 'long_context_raw_first' },
+              ],
+              validation: {
+                enum: ['cost', 'balanced', 'long_context_raw_first'],
+              },
+              displayOrder: 72,
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1000 },
+              displayOrder: 73,
+              description: '估算历史 token 超过该值时触发摘要；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1 },
+              displayOrder: 74,
+              description: '压缩时最近 N 个用户轮次及其后的回复保持原文；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+        ],
+      },
+    }));
+
+    render(<SettingsPage />);
+
+    expect(screen.getByText('AGENT_CONTEXT_COMPRESSION_PROFILE')).toBeInTheDocument();
+    expect(screen.getByText('成本优先')).toBeInTheDocument();
+    expect(screen.getByText('均衡推荐')).toBeInTheDocument();
+    expect(screen.getByText('长上下文原文优先')).toBeInTheDocument();
+    expect(screen.getByText(/估算历史 token 超过该值时触发摘要/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
+    expect(screen.getByText(/压缩时最近 N 个用户轮次及其后的回复保持原文/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
   });
 
   it('reset button semantic: discards local changes without network request', () => {
@@ -598,14 +749,82 @@ describe('SettingsPage', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it('does not render desktop env backup card outside desktop runtime', () => {
+  it('renders notification test panel before notification fields', () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'notification' }));
+
     render(<SettingsPage />);
 
-    expect(screen.queryByRole('heading', { name: '配置备份' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '导出 .env' })).not.toBeInTheDocument();
+    expect(screen.getByText('通知测试面板:WECHAT_WEBHOOK_URL')).toBeInTheDocument();
+    expect(screen.getByText('WECHAT_WEBHOOK_URL')).toBeInTheDocument();
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('通知测试');
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('通知设置');
   });
 
-  it('renders desktop env backup actions in desktop runtime and exports saved env', async () => {
+  it('uses browser and backend logs in settings panel diagnostic hints outside desktop runtime', () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'notification' }));
+
+    render(<SettingsPage />);
+
+    expect(screen.getAllByText(/浏览器开发者工具控制台与后端日志/)).toHaveLength(2);
+    expect(screen.queryByText('desktop.log')).not.toBeInTheDocument();
+  });
+
+  it('uses desktop log in settings panel diagnostic hints during desktop runtime', () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'notification' }));
+    (window as { dsaDesktop?: unknown }).dsaDesktop = createDesktopRuntime();
+
+    render(<SettingsPage />);
+
+    expect(screen.getAllByText('desktop.log')).toHaveLength(2);
+    expect(screen.queryByText(/浏览器开发者工具控制台与后端日志/)).not.toBeInTheDocument();
+  });
+
+  it('renders env backup actions outside desktop runtime', () => {
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('heading', { name: '配置备份' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 .env' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导入 .env' })).toBeInTheDocument();
+  });
+
+  it('disables env backup actions when web auth is not enabled', () => {
+    useAuthMock.mockReturnValue({
+      authEnabled: false,
+      passwordChangeable: false,
+      refreshStatus,
+    });
+
+    render(<SettingsPage />);
+
+    expect(screen.getByText(/当前 Web 端未开启管理员鉴权/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 .env' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '导入 .env' })).toBeDisabled();
+  });
+
+  it('uses live auth state for env backup availability instead of loaded config items', () => {
+    const configState = buildSystemConfigState();
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      itemsByCategory: {
+        ...configState.itemsByCategory,
+        system: configState.itemsByCategory.system.map((item) => (
+          item.key === 'ADMIN_AUTH_ENABLED' ? { ...item, value: 'false' } : item
+        )),
+      },
+    }));
+    useAuthMock.mockReturnValue({
+      authEnabled: true,
+      passwordChangeable: true,
+      refreshStatus,
+    });
+
+    render(<SettingsPage />);
+
+    expect(screen.queryByText(/当前 Web 端未开启管理员鉴权/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 .env' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: '导入 .env' })).not.toBeDisabled();
+  });
+
+  it('exports saved env from config backup actions', async () => {
     (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
 
     render(<SettingsPage />);
@@ -614,7 +833,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '导出 .env' }));
 
-    await waitFor(() => expect(exportDesktopEnv).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(exportEnv).toHaveBeenCalledTimes(1));
     expect(mockedAnchorClick).toHaveBeenCalledTimes(1);
     expect(load).not.toHaveBeenCalled();
   });
@@ -630,10 +849,10 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '导入 .env' }));
 
     expect(await screen.findByText('导入会覆盖当前草稿')).toBeInTheDocument();
-    expect(importDesktopEnv).not.toHaveBeenCalled();
+    expect(importEnv).not.toHaveBeenCalled();
   });
 
-  it('reloads config after successful desktop env import', async () => {
+  it('reloads config after successful env import', async () => {
     (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
 
     const { container } = render(<SettingsPage />);
@@ -649,11 +868,11 @@ describe('SettingsPage', () => {
       },
     });
 
-    await waitFor(() => expect(importDesktopEnv).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(importEnv).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
   });
 
-  it('shows an error when desktop env import succeeds but reload fails', async () => {
+  it('shows an error when env import succeeds but reload fails', async () => {
     (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
     load.mockResolvedValue(false);
 
@@ -671,7 +890,7 @@ describe('SettingsPage', () => {
       },
     });
 
-    await waitFor(() => expect(importDesktopEnv).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(importEnv).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
     expect(screen.getByText('配置已导入但刷新失败')).toBeInTheDocument();
     expect(screen.getByText('备份已导入，但重新加载配置失败，请手动重载页面。')).toBeInTheDocument();
@@ -724,5 +943,26 @@ describe('SettingsPage', () => {
         'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0'
       );
     });
+  });
+
+  it('renders downloaded desktop update and starts install on demand', async () => {
+    desktopGetUpdateState.mockResolvedValue({
+      status: 'update-downloaded',
+      updateMode: 'auto',
+      currentVersion: '3.12.0',
+      latestVersion: '3.13.0',
+      releaseUrl: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+      message: '新版本 3.13.0 已下载，可重启应用完成安装。',
+      downloadPercent: 100,
+    });
+    (window as { dsaDesktop?: unknown }).dsaDesktop = createDesktopRuntime();
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByText('更新已下载:新版本 3.13.0 已下载，可重启应用完成安装。')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重启安装' }));
+
+    await waitFor(() => expect(desktopInstallDownloadedUpdate).toHaveBeenCalledTimes(1));
   });
 });

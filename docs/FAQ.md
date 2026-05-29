@@ -132,9 +132,9 @@ PROXY_PORT=10809
 
 系统按优先级只取一种：高级模型路由 YAML（`LITELLM_CONFIG`）> `LLM_CHANNELS` > legacy keys。但 YAML 仅在文件可正常解析且产出了有效 `model_list` 时才生效；如果 YAML 路径无效或内容为空，系统会自动回退到 `LLM_CHANNELS` 或 legacy keys。一旦某一层级实际生效，更低优先级的配置不参与解析。
 
-**Q: test_env 输出“未配置可用 AI 模型”怎么办？**
+**Q: check_env 输出“未配置可用 AI 模型”怎么办？**
 
-默认先选一种服务商并填写对应 API Key；如果需要固定主模型，再补 `LITELLM_MODEL=provider/model`；如果要多模型切换，再配置 `LLM_CHANNELS` 或高级模型路由 YAML。运行 `python test_env.py --config` 校验配置，`python test_env.py --llm` 实际调用 API 测试。
+默认先选一种服务商并填写对应 API Key；如果需要固定主模型，再补 `LITELLM_MODEL=provider/model`；如果要多模型切换，再配置 `LLM_CHANNELS` 或高级模型路由 YAML。运行 `python scripts/check_env.py --config` 校验配置，`python scripts/check_env.py --llm` 实际调用 API 测试。
 
 **Q: 如何同时使用多个模型（如 AIHubmix + DeepSeek + Gemini）？**
 

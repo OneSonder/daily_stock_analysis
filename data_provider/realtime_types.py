@@ -125,7 +125,7 @@ class UnifiedRealtimeQuote:
     change_amount: Optional[float] = None   # 涨跌额
     
     # === 量价指标（部分源可能缺失）===
-    volume: Optional[int] = None            # 成交量（手）
+    volume: Optional[int] = None            # 成交量（股，与历史日线口径一致）
     amount: Optional[float] = None          # 成交额（元）
     volume_ratio: Optional[float] = None    # 量比
     turnover_rate: Optional[float] = None   # 换手率(%)

@@ -28,6 +28,7 @@ from api.v1.schemas.history import (
     ReportStrategy,
     ReportDetails,
     MarkdownReportResponse,
+    RunDiagnosticSummaryResponse,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
@@ -43,6 +44,7 @@ from src.utils.data_processing import (
     normalize_model_used,
     extract_fundamental_detail_fields,
     extract_board_detail_fields,
+    extract_realtime_detail_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,26 +225,10 @@ def get_history_detail(
         # 从 context_snapshot 中提取价格信息
         # 注意：使用 `is None` 而非 `or`，避免把 0.0（平盘）误判为缺失值；
         # 同时不混用 `change_60d`（60 日累计涨跌幅）作为日内 change_pct 的兜底。
-        current_price = None
-        change_pct = None
         context_snapshot = result.get("context_snapshot")
-        if context_snapshot and isinstance(context_snapshot, dict):
-            # 优先从 enhanced_context.realtime 获取
-            enhanced_context = context_snapshot.get("enhanced_context") or {}
-            realtime = enhanced_context.get("realtime") or {}
-            current_price = realtime.get("price")
-            change_pct = realtime.get("change_pct")
-
-            # 缺失时再从 realtime_quote_raw 兜底
-            realtime_quote_raw = context_snapshot.get("realtime_quote_raw")
-            if not isinstance(realtime_quote_raw, dict):
-                realtime_quote_raw = {}
-            if current_price is None:
-                current_price = realtime_quote_raw.get("price")
-            if change_pct is None:
-                change_pct = realtime_quote_raw.get("change_pct")
-            if change_pct is None:
-                change_pct = realtime_quote_raw.get("pct_chg")
+        realtime_fields = extract_realtime_detail_fields(context_snapshot)
+        current_price = realtime_fields.get("current_price")
+        change_pct = realtime_fields.get("change_pct")
         
         raw_result = result.get("raw_result")
         if not isinstance(raw_result, dict):
@@ -341,6 +327,49 @@ def get_history_detail(
                 "error": "internal_error",
                 "message": f"查询历史详情失败: {str(e)}"
             }
+        )
+
+
+@router.get(
+    "/{record_id}/diagnostics",
+    response_model=RunDiagnosticSummaryResponse,
+    responses={
+        200: {"description": "运行诊断摘要"},
+        404: {"description": "报告不存在", "model": ErrorResponse},
+        500: {"description": "服务器错误", "model": ErrorResponse},
+    },
+    summary="获取历史报告运行诊断摘要",
+    description="根据分析历史记录 ID 或 query_id 获取用户可读诊断摘要和脱敏复制文本。",
+)
+def get_history_diagnostics(
+    record_id: str,
+    db_manager: DatabaseManager = Depends(get_database_manager),
+) -> RunDiagnosticSummaryResponse:
+    """
+    获取历史报告运行诊断摘要。
+    """
+    try:
+        service = HistoryService(db_manager)
+        summary = service.resolve_and_get_diagnostics(record_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "not_found",
+                    "message": f"未找到 id/query_id={record_id} 的分析记录",
+                },
+            )
+        return RunDiagnosticSummaryResponse.model_validate(summary)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询运行诊断摘要失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": f"查询运行诊断摘要失败: {str(e)}",
+            },
         )
 
 

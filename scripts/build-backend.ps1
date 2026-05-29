@@ -112,6 +112,7 @@ $pyInstallerArgs = @(
   '--noconfirm',
   '--noconsole',
   '--add-data', 'static;static',
+  '--add-data', 'strategies;strategies',
   '--collect-data', 'litellm',
   '--collect-data', 'tiktoken'
 )
@@ -142,6 +143,20 @@ if (Test-Path $packagedStatic) {
   }
 } else {
   Write-Warning "Could not locate packaged static directory under dist\backend\stock_analysis; skipping post-package check."
+}
+
+Write-Host 'Verifying packaged built-in strategies...'
+$sourceStrategyCount = @(Get-ChildItem -Path 'strategies' -Filter '*.yaml' -File).Count
+$packagedStrategies = Join-Path 'dist\backend\stock_analysis' '_internal\strategies'
+if (-not (Test-Path $packagedStrategies)) {
+  $packagedStrategies = Join-Path 'dist\backend\stock_analysis' 'strategies'
+}
+if (-not (Test-Path $packagedStrategies)) {
+  throw 'Packaged strategies directory not found under dist\backend\stock_analysis.'
+}
+$packagedStrategyCount = @(Get-ChildItem -Path $packagedStrategies -Filter '*.yaml' -File).Count
+if ($packagedStrategyCount -ne $sourceStrategyCount) {
+  throw "Packaged strategies count mismatch: expected $sourceStrategyCount, got $packagedStrategyCount."
 }
 
 Write-Host 'Backend build completed.'

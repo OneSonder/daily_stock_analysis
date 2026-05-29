@@ -28,25 +28,35 @@ function createStreamResponse(lines: string[]) {
   );
 }
 
-describe('agentChatStore.startStream', () => {
-  beforeEach(() => {
-    localStorage.clear();
-    useAgentChatStore.setState({
-      messages: [],
-      loading: false,
-      progressSteps: [],
-      sessionId: 'session-test',
-      sessions: [],
-      sessionsLoading: false,
-      chatError: null,
-      currentRoute: '/chat',
-      completionBadge: false,
-      hasInitialLoad: true,
-      abortController: null,
-    });
-    vi.clearAllMocks();
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
+  return { promise, resolve, reject };
+}
 
+beforeEach(() => {
+  localStorage.clear();
+  useAgentChatStore.setState({
+    messages: [],
+    loading: false,
+    progressSteps: [],
+    sessionId: 'session-test',
+    sessions: [],
+    sessionsLoading: false,
+    chatError: null,
+    currentRoute: '/chat',
+    completionBadge: false,
+    hasInitialLoad: true,
+    abortController: null,
+  });
+  vi.clearAllMocks();
+});
+
+describe('agentChatStore.startStream', () => {
   it('appends the user message and final assistant message from the SSE stream', async () => {
     vi.mocked(agentApi.chatStream).mockResolvedValue(
       createStreamResponse([
@@ -76,6 +86,45 @@ describe('agentChatStore.startStream', () => {
     });
     expect(state.messages[1].thinkingSteps).toHaveLength(2);
     expect(state.progressSteps).toEqual([]);
+  });
+
+  it('preserves multiple selected skills on streamed user and assistant messages', async () => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"done","success":true,"content":"多策略分析结果"}',
+      ]),
+    );
+
+    await useAgentChatStore
+      .getState()
+      .startStream(
+        {
+          message: '分析茅台',
+          session_id: 'session-test',
+          skills: ['bull_trend', 'ma_golden_cross'],
+        },
+        {
+          skillNames: ['趋势分析', '均线金叉'],
+        },
+      );
+
+    const state = useAgentChatStore.getState();
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0]).toMatchObject({
+      role: 'user',
+      skills: ['bull_trend', 'ma_golden_cross'],
+      skill: 'bull_trend',
+      skillNames: ['趋势分析', '均线金叉'],
+      skillName: '趋势分析、均线金叉',
+    });
+    expect(state.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '多策略分析结果',
+      skills: ['bull_trend', 'ma_golden_cross'],
+      skill: 'bull_trend',
+      skillNames: ['趋势分析', '均线金叉'],
+      skillName: '趋势分析、均线金叉',
+    });
   });
 
   it('preserves parsed error details when done.success is false', async () => {
@@ -142,5 +191,68 @@ describe('agentChatStore.startStream', () => {
       category: 'unknown',
       rawMessage: '分析出错',
     });
+  });
+});
+
+describe('agentChatStore.switchSession', () => {
+
+  it('clears transient loading state when switching sessions during a stream', async () => {
+    const ac = new AbortController();
+    vi.mocked(agentApi.getChatSessionMessages).mockResolvedValue([
+      { id: 'msg-2', role: 'assistant', content: '历史回复', created_at: null },
+    ]);
+    useAgentChatStore.setState({
+      loading: true,
+      progressSteps: [{ type: 'thinking', message: '正在制定分析路径...' }],
+      abortController: ac,
+      chatError: {
+        title: '请求失败',
+        message: '旧错误',
+        category: 'unknown',
+        rawMessage: '旧错误',
+      },
+    });
+
+    await useAgentChatStore.getState().switchSession('session-2');
+
+    const state = useAgentChatStore.getState();
+    expect(ac.signal.aborted).toBe(true);
+    expect(state.sessionId).toBe('session-2');
+    expect(state.loading).toBe(false);
+    expect(state.progressSteps).toEqual([]);
+    expect(state.abortController).toBeNull();
+    expect(state.chatError).toBeNull();
+    expect(state.messages).toEqual([
+      { id: 'msg-2', role: 'assistant', content: '历史回复' },
+    ]);
+  });
+
+  it('does not let a late session history response overwrite the current session', async () => {
+    const sessionA = createDeferred<
+      Array<{ id: string; role: 'user' | 'assistant'; content: string; created_at: string | null }>
+    >();
+    const sessionB = createDeferred<
+      Array<{ id: string; role: 'user' | 'assistant'; content: string; created_at: string | null }>
+    >();
+    vi.mocked(agentApi.getChatSessionMessages).mockImplementation((targetSessionId: string) => {
+      if (targetSessionId === 'session-a') return sessionA.promise;
+      if (targetSessionId === 'session-b') return sessionB.promise;
+      return Promise.resolve([]);
+    });
+
+    const switchToA = useAgentChatStore.getState().switchSession('session-a');
+    const switchToB = useAgentChatStore.getState().switchSession('session-b');
+
+    sessionB.resolve([{ id: 'msg-b', role: 'assistant', content: 'B 回复', created_at: null }]);
+    await switchToB;
+
+    sessionA.resolve([{ id: 'msg-a', role: 'assistant', content: 'A 回复', created_at: null }]);
+    await switchToA;
+
+    const state = useAgentChatStore.getState();
+    expect(state.sessionId).toBe('session-b');
+    expect(state.messages).toEqual([
+      { id: 'msg-b', role: 'assistant', content: 'B 回复' },
+    ]);
   });
 });

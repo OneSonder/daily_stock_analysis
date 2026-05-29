@@ -130,9 +130,9 @@ PROXY_PORT=10809
 
 The system uses exactly one mode by priority: advanced YAML routing (`LITELLM_CONFIG`) > `LLM_CHANNELS` > legacy keys. However, YAML routing only takes effect when the file can be parsed successfully and yields a non-empty `model_list`; if the YAML path is invalid or the content is empty, the system automatically falls back to `LLM_CHANNELS` or legacy keys. Once a tier is active, lower-priority tiers are not used.
 
-**Q: test_env says no usable AI model is configured, what should I do?**
+**Q: check_env says no usable AI model is configured, what should I do?**
 
-Start with one provider and its API key. If you want to pin a primary model, add `LITELLM_MODEL=provider/model`. If you need multi-model switching, configure `LLM_CHANNELS` or advanced YAML routing. Run `python test_env.py --config` to validate config and `python test_env.py --llm` to actually call the API.
+Start with one provider and its API key. If you want to pin a primary model, add `LITELLM_MODEL=provider/model`. If you need multi-model switching, configure `LLM_CHANNELS` or advanced YAML routing. Run `python scripts/check_env.py --config` to validate config and `python scripts/check_env.py --llm` to actually call the API.
 
 **Q: How to use multiple models at once (e.g. AIHubmix + DeepSeek + Gemini)?**
 

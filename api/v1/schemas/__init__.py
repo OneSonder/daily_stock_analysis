@@ -60,6 +60,8 @@ from api.v1.schemas.system_config import (
     ImportSystemConfigRequest,
     ConfigValidationIssue,
     ValidateSystemConfigResponse,
+    LLMCapabilityCheck,
+    LLMCapabilityCheckResult,
     TestLLMChannelRequest,
     TestLLMChannelResponse,
     SystemConfigValidationErrorResponse,
@@ -90,6 +92,18 @@ from api.v1.schemas.portfolio import (
     PortfolioImportBrokerListResponse,
     PortfolioFxRefreshResponse,
     PortfolioRiskResponse,
+)
+from api.v1.schemas.alerts import (
+    AlertDeleteResponse,
+    AlertNotificationItem,
+    AlertNotificationListResponse,
+    AlertRuleCreateRequest,
+    AlertRuleItem,
+    AlertRuleListResponse,
+    AlertRuleTestResponse,
+    AlertRuleUpdateRequest,
+    AlertTriggerItem,
+    AlertTriggerListResponse,
 )
 
 __all__ = [
@@ -140,6 +154,8 @@ __all__ = [
     "ImportSystemConfigRequest",
     "ConfigValidationIssue",
     "ValidateSystemConfigResponse",
+    "LLMCapabilityCheck",
+    "LLMCapabilityCheckResult",
     "TestLLMChannelRequest",
     "TestLLMChannelResponse",
     "SystemConfigValidationErrorResponse",
@@ -169,4 +185,15 @@ __all__ = [
     "PortfolioImportBrokerListResponse",
     "PortfolioFxRefreshResponse",
     "PortfolioRiskResponse",
+    # alerts
+    "AlertDeleteResponse",
+    "AlertNotificationItem",
+    "AlertNotificationListResponse",
+    "AlertRuleCreateRequest",
+    "AlertRuleItem",
+    "AlertRuleListResponse",
+    "AlertRuleTestResponse",
+    "AlertRuleUpdateRequest",
+    "AlertTriggerItem",
+    "AlertTriggerListResponse",
 ]
