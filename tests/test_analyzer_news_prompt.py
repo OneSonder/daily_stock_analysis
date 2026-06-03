@@ -218,6 +218,58 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("近1日的新闻搜索结果", prompt)
         self.assertIn("超出近1日窗口的新闻一律忽略", prompt)
 
+    def test_format_prompt_injects_market_phase_and_pack_summary_before_technical_data(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-03-27",
+            "today": {},
+            "market_phase_context": {
+                "market": "cn",
+                "phase": "premarket",
+                "market_local_time": "2026-03-27T09:00:00+08:00",
+                "effective_daily_bar_date": "2026-03-26",
+                "is_partial_bar": False,
+                "minutes_to_open": 30,
+                "warnings": [],
+            },
+        }
+
+        prompt = analyzer._format_prompt(
+            context,
+            "贵州茅台",
+            news_context=None,
+            analysis_context_pack_summary="\n## 分析上下文包摘要\n- 数据块状态：行情 available\n",
+        )
+
+        phase_index = prompt.index("市场阶段上下文")
+        pack_index = prompt.index("分析上下文包摘要")
+        technical_index = prompt.index("技术面数据")
+        self.assertLess(phase_index, technical_index)
+        self.assertLess(phase_index, pack_index)
+        self.assertLess(pack_index, technical_index)
+        self.assertIn("盘前", prompt)
+        self.assertIn("不得描述“今日走势已经发生”", prompt)
+
+    def test_format_prompt_omits_market_phase_section_without_context(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-03-27",
+            "today": {},
+        }
+
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context=None)
+
+        self.assertNotIn("市场阶段上下文", prompt)
+        self.assertNotIn("分析上下文包摘要", prompt)
+
     def test_format_prompt_omits_legacy_trend_checks_for_nondefault_skill_mode(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer(

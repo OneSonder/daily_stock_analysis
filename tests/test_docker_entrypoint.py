@@ -3,6 +3,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,6 +34,31 @@ def test_docker_entrypoint_repairs_ownership_and_user_permissions() -> None:
     assert re.search(r"\bchown\s+-R\b", entrypoint)
     assert re.search(r"\bchmod\s+-R\s+u\+rwX\b", entrypoint)
     assert re.search(r"gosu\s+\"\$APP_USER:\$APP_GROUP\"\s+test\s+-w", entrypoint)
+
+
+def test_docker_compose_injects_env_without_single_file_env_mount() -> None:
+    compose_text = (REPO_ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_text)
+    common = compose["x-common"]
+
+    assert "../.env" in common["env_file"]
+    assert "../.env:/app/.env" not in common["volumes"]
+    assert not any(str(volume).startswith("../.env:") for volume in common["volumes"])
+
+
+def test_docker_guides_do_not_recommend_single_file_env_bind_mount() -> None:
+    forbidden_mount_patterns = [
+        r"\$\(pwd\)/\.env:/app/\.env",
+        r"\.\./\.env:/app/\.env",
+    ]
+
+    for doc_path in ("docs/full-guide.md", "docs/full-guide_EN.md"):
+        doc = (REPO_ROOT / doc_path).read_text(encoding="utf-8")
+
+        assert "--env-file .env" in doc
+        assert "env_file:" in doc
+        for pattern in forbidden_mount_patterns:
+            assert re.search(pattern, doc) is None
 
 
 def test_documented_compose_exec_commands_run_as_dsa() -> None:

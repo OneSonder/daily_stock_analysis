@@ -16,14 +16,20 @@ same implementation.
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from src.config import get_config
+from src.agent.chat_context import build_agent_chat_context_bundle
 from src.agent.llm_adapter import LLMToolAdapter
+from src.agent.provider_trace import extract_provider_trace_turns
 from src.agent.runner import run_agent_loop, parse_dashboard_json
+from src.storage import get_db
 from src.agent.tools.registry import ToolRegistry
 from src.report_language import normalize_report_language
 from src.market_context import get_market_role, get_market_guidelines
+from src.market_phase_prompt import format_market_phase_prompt_section
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,7 @@ class AgentResult:
     provider: str = ""
     model: str = ""                            # comma-separated models used (supports fallback)
     error: Optional[str] = None
+    messages: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ============================================================
@@ -555,14 +562,15 @@ class AgentExecutor:
         tool_decls = self.tool_registry.to_openai_tools()
 
         # Get conversation history
-        session = conversation_manager.get_or_create(session_id)
-        history = session.get_history()
+        conversation_manager.get_or_create(session_id)
+        config = getattr(self.llm_adapter, "_config", None) or get_config()
+        bundle = build_agent_chat_context_bundle(session_id, self.llm_adapter, config)
 
         # Initialize conversation
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
-        messages.extend(history)
+        messages.extend(bundle.context_messages)
 
         # Inject previous analysis context if provided (data reuse from report follow-up)
         if context:
@@ -589,20 +597,104 @@ class AgentExecutor:
                 messages.append({"role": "assistant", "content": "好的，我已了解该股票的历史分析数据。请告诉我你想了解什么？"})
 
         messages.append({"role": "user", "content": message})
+        baseline_len = len(messages)
+        run_id = str(uuid.uuid4())
 
         # Persist the user turn immediately so the session appears in history during processing
-        conversation_manager.add_message(session_id, "user", message)
+        user_message_id = conversation_manager.add_message(session_id, "user", message)
 
         result = self._run_loop(messages, tool_decls, parse_dashboard=False, progress_callback=progress_callback)
 
         # Persist assistant reply (or error note) for context continuity
         if result.success:
-            conversation_manager.add_message(session_id, "assistant", result.content)
+            assistant_message_id = conversation_manager.add_message(session_id, "assistant", result.content)
+            self._persist_provider_trace(
+                session_id=session_id,
+                run_id=run_id,
+                messages=result.messages,
+                baseline_len=baseline_len,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
         else:
             error_note = f"[分析失败] {result.error or '未知错误'}"
             conversation_manager.add_message(session_id, "assistant", error_note)
 
         return result
+
+    def _persist_provider_trace(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        messages: List[Dict[str, Any]],
+        baseline_len: int,
+        user_message_id: int,
+        assistant_message_id: int,
+    ) -> None:
+        try:
+            turns, diagnostics = extract_provider_trace_turns(
+                messages,
+                baseline_len=baseline_len,
+                run_id=run_id,
+                anchor_user_message_id=user_message_id,
+                anchor_assistant_message_id=assistant_message_id,
+            )
+        except Exception:
+            logger.warning(
+                "Provider trace extraction failed for session %s run %s",
+                session_id,
+                run_id,
+                exc_info=True,
+            )
+            return
+
+        if diagnostics.trace_dropped_reason:
+            logger.debug(
+                "Provider trace skipped for session %s run %s: %s",
+                session_id,
+                run_id,
+                diagnostics.trace_dropped_reason,
+            )
+        if not turns:
+            return
+
+        try:
+            db = get_db()
+        except Exception:
+            logger.warning(
+                "Provider trace storage unavailable for session %s run %s",
+                session_id,
+                run_id,
+                exc_info=True,
+            )
+            return
+
+        for turn in turns:
+            try:
+                db.save_agent_provider_turn(
+                    session_id=session_id,
+                    run_id=run_id,
+                    provider=turn.provider,
+                    model=turn.model,
+                    anchor_user_message_id=user_message_id,
+                    anchor_assistant_message_id=assistant_message_id,
+                    messages=turn.messages,
+                    contains_reasoning=turn.contains_reasoning,
+                    contains_tool_calls=turn.contains_tool_calls,
+                    contains_thinking_blocks=turn.contains_thinking_blocks,
+                    must_roundtrip=turn.must_roundtrip,
+                    estimated_tokens=turn.estimated_tokens,
+                )
+            except Exception:
+                logger.warning(
+                    "Provider trace persistence failed for session %s run %s provider=%s model=%s",
+                    session_id,
+                    run_id,
+                    turn.provider,
+                    turn.model,
+                    exc_info=True,
+                )
 
     def _run_loop(self, messages: List[Dict[str, Any]], tool_decls: List[Dict[str, Any]], parse_dashboard: bool, progress_callback: Optional[Callable] = None) -> AgentResult:
         """Delegate to the shared runner and adapt the result.
@@ -634,6 +726,7 @@ class AgentExecutor:
                 provider=loop_result.provider,
                 model=model_str,
                 error=None if dashboard else "Failed to parse dashboard JSON from agent response",
+                messages=loop_result.messages,
             )
 
         return AgentResult(
@@ -646,6 +739,7 @@ class AgentExecutor:
             provider=loop_result.provider,
             model=model_str,
             error=loop_result.error,
+            messages=loop_result.messages,
         )
 
     def _build_user_message(self, task: str, context: Optional[Dict[str, Any]] = None) -> str:
@@ -661,6 +755,17 @@ class AgentExecutor:
                 parts.append("输出语言: English（所有 JSON 键名保持不变，所有面向用户的文本值使用英文）")
             else:
                 parts.append("输出语言: 中文（所有 JSON 键名保持不变，所有面向用户的文本值使用中文）")
+
+            market_phase_section = format_market_phase_prompt_section(
+                context.get("market_phase_context"),
+                report_language=report_language,
+            )
+            if market_phase_section:
+                parts.append(market_phase_section)
+
+            analysis_context_pack_summary = context.get("analysis_context_pack_summary")
+            if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
+                parts.append(analysis_context_pack_summary)
 
             # Inject pre-fetched context data to avoid redundant fetches
             if context.get("realtime_quote"):

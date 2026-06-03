@@ -21,6 +21,8 @@ from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
     get_signal_level,
+    get_chip_unavailable_reason,
+    is_chip_structure_unavailable,
     localize_bias_status,
     localize_chip_health,
     localize_operation_advice,
@@ -28,6 +30,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.storage import DatabaseManager
+from src.services.run_diagnostics import build_run_diagnostic_summary
 from src.utils.data_processing import normalize_model_used, parse_json_field
 
 if TYPE_CHECKING:
@@ -197,6 +200,46 @@ class HistoryService:
             logger.error(f"resolve_and_get_news failed for {record_id}: {e}", exc_info=True)
             return []
 
+    def resolve_and_get_diagnostics(self, record_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolve record_id and return a user-facing run diagnostic summary.
+
+        Legacy records without diagnostic snapshots return an ``unknown``
+        summary instead of failing. Storage and JSON parsing errors are
+        propagated so callers can surface backend failures accurately.
+        """
+        record = self._resolve_record(record_id)
+        if not record:
+            return None
+
+        return build_run_diagnostic_summary(
+            context_snapshot=self._parse_diagnostic_json_field(
+                getattr(record, "context_snapshot", None),
+                "context_snapshot",
+            ),
+            raw_result=self._parse_diagnostic_json_field(
+                getattr(record, "raw_result", None),
+                "raw_result",
+            ),
+            report_saved=True,
+            query_id=getattr(record, "query_id", None),
+            stock_code=getattr(record, "code", None),
+        )
+
+    @staticmethod
+    def _parse_diagnostic_json_field(value: Any, field_name: str) -> Any:
+        """Strict JSON parser for persisted diagnostic inputs."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid {field_name} JSON") from exc
+        return value
+
     def get_history_detail_by_id(self, record_id: int) -> Optional[Dict[str, Any]]:
         """
         Get history report detail.
@@ -250,6 +293,20 @@ class HistoryService:
             display_points[field] = str(db_value) if db_value is not None else None
         return display_points
 
+    @staticmethod
+    def _extract_market_review_content(record, raw_result: Any) -> Optional[str]:
+        """Return persisted market review content from raw_result or news_content."""
+        if isinstance(raw_result, dict):
+            for field in ("raw_response", "market_review_report"):
+                content = raw_result.get(field)
+                if isinstance(content, str) and content.strip():
+                    return content
+
+        news_content = getattr(record, "news_content", None)
+        if isinstance(news_content, str) and news_content.strip():
+            return news_content
+        return None
+
     def _record_to_detail_dict(self, record) -> Dict[str, Any]:
         """
         Convert an AnalysisHistory ORM record to a detail response dict.
@@ -267,6 +324,10 @@ class HistoryService:
             except json.JSONDecodeError:
                 context_snapshot = record.context_snapshot
 
+        market_review_content = None
+        if getattr(record, "report_type", None) == "market_review":
+            market_review_content = self._extract_market_review_content(record, raw_result)
+
         return {
             "id": record.id,
             "query_id": record.query_id,
@@ -275,7 +336,7 @@ class HistoryService:
             "report_type": record.report_type,
             "created_at": record.created_at.isoformat() if record.created_at else None,
             "model_used": model_used,
-            "analysis_summary": record.analysis_summary,
+            "analysis_summary": market_review_content or record.analysis_summary,
             "operation_advice": record.operation_advice,
             "trend_prediction": record.trend_prediction,
             "sentiment_score": record.sentiment_score,
@@ -284,7 +345,7 @@ class HistoryService:
             "secondary_buy": sniper_points.get("secondary_buy"),
             "stop_loss": sniper_points.get("stop_loss"),
             "take_profit": sniper_points.get("take_profit"),
-            "news_content": record.news_content,
+            "news_content": market_review_content or record.news_content,
             "raw_result": raw_result,
             "context_snapshot": context_snapshot,
         }
@@ -468,6 +529,16 @@ class HistoryService:
             raise MarkdownReportGenerationError(
                 f"raw_result is empty or invalid for record {record_id}",
                 record_id=record_id
+            )
+
+        if getattr(record, "report_type", None) == "market_review":
+            markdown_report = self._extract_market_review_content(record, raw_result)
+            if markdown_report:
+                return markdown_report
+            logger.error(f"get_markdown_report: market review report is empty for {record_id}")
+            raise MarkdownReportGenerationError(
+                f"market review report is empty for record {record_id}",
+                record_id=record_id,
             )
 
         try:
@@ -720,20 +791,33 @@ class HistoryService:
                 ])
             # 筹码结构
             if chip_data:
-                raw_chip_health = chip_data.get('chip_health', 'N/A')
-                chip_health = localize_chip_health(raw_chip_health, report_language)
-                normalized_chip_health = str(raw_chip_health or "").strip().lower()
-                if normalized_chip_health in {"健康", "healthy"}:
-                    chip_emoji = "✅"
-                elif normalized_chip_health in {"一般", "average"}:
-                    chip_emoji = "⚠️"
+                if is_chip_structure_unavailable(chip_data):
+                    report_lines.extend([
+                        f"**{labels['chip_label']}**: {get_chip_unavailable_reason(chip_data, report_language)}",
+                        "",
+                    ])
                 else:
-                    chip_emoji = "🚨"
-                report_lines.extend([
-                    f"**{labels['chip_label']}**: {chip_data.get('profit_ratio', 'N/A')} | {chip_data.get('avg_cost', 'N/A')} | "
-                    f"{chip_data.get('concentration', 'N/A')} {chip_emoji}{chip_health}",
-                    "",
-                ])
+                    raw_chip_health = chip_data.get('chip_health', 'N/A')
+                    chip_health = localize_chip_health(raw_chip_health, report_language)
+                    normalized_chip_health = str(raw_chip_health or "").strip().lower()
+                    if normalized_chip_health in {"健康", "healthy"}:
+                        chip_emoji = "✅"
+                    elif normalized_chip_health in {"一般", "average"}:
+                        chip_emoji = "⚠️"
+                    else:
+                        chip_emoji = "🚨"
+                    report_lines.extend([
+                        f"**{labels['chip_label']}**: {chip_data.get('profit_ratio', 'N/A')} | {chip_data.get('avg_cost', 'N/A')} | "
+                        f"{chip_data.get('concentration', 'N/A')} {chip_emoji}{chip_health}",
+                        "",
+                    ])
+            else:
+                chip_unavailable_reason = get_chip_unavailable_reason(data_persp, report_language)
+                if chip_unavailable_reason:
+                    report_lines.extend([
+                        f"**{labels['chip_label']}**: {chip_unavailable_reason}",
+                        "",
+                    ])
 
         # ========== 作战计划 ==========
         battle = dashboard.get('battle_plan', {}) if dashboard else {}

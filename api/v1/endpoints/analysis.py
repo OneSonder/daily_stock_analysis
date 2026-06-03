@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
@@ -69,11 +70,13 @@ from src.services.task_queue import (
     DuplicateTaskError,
     TaskStatus as TaskStatusEnum,
 )
+from src.services.run_diagnostics import build_run_diagnostic_summary
 from src.utils.data_processing import (
     normalize_model_used,
     parse_json_field,
     extract_fundamental_detail_fields,
     extract_board_detail_fields,
+    extract_realtime_detail_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +84,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
+
+
+def _get_task_trace_id(task: Any) -> Optional[str]:
+    trace_id = getattr(task, "trace_id", None)
+    if isinstance(trace_id, str) and trace_id.strip():
+        return trace_id
+    task_id = getattr(task, "task_id", None)
+    if isinstance(task_id, str) and task_id.strip():
+        return task_id
+    return None
 
 
 def _market_review_lock_path(config: Config) -> Path:
@@ -116,6 +129,7 @@ def _run_market_review_background(
     override_region: Optional[str] = None,
     lock_token: Optional[_MarketReviewExecutionLock] = None,
     config: Optional[Config] = None,
+    query_id: Optional[str] = None,
 ) -> None:
     """Run market review after the API response has been accepted."""
     from src.core.market_review import run_market_review
@@ -123,13 +137,16 @@ def _run_market_review_background(
     runtime_config = config or get_config_dep()
     try:
         notifier, analyzer, search_service = _build_market_review_runtime(runtime_config)
-        report = run_market_review(
-            notifier=notifier,
-            analyzer=analyzer,
-            search_service=search_service,
-            send_notification=send_notification,
-            override_region=override_region,
-        )
+        review_kwargs = {
+            "notifier": notifier,
+            "analyzer": analyzer,
+            "search_service": search_service,
+            "send_notification": send_notification,
+            "override_region": override_region,
+        }
+        if query_id:
+            review_kwargs["query_id"] = query_id
+        report = run_market_review(**review_kwargs)
         if not report:
             raise RuntimeError("大盘复盘未返回可持久化报告")
         return {"result": report}
@@ -319,6 +336,7 @@ def _handle_async_analysis_batch(
     original_query = request.original_query if (is_single or preserve_batch_metadata) else None
     selection_source = request.selection_source if (is_single or preserve_batch_metadata) else None
     notify = getattr(request, "notify", True)
+    skills = getattr(request, "skills", None)
 
     submit_kwargs = dict(
         stock_codes=stock_codes,
@@ -329,12 +347,15 @@ def _handle_async_analysis_batch(
         force_refresh=request.force_refresh,
         notify=notify,
     )
+    if skills is not None:
+        submit_kwargs["skills"] = skills
 
     accepted_tasks, duplicate_errors = task_queue.submit_tasks_batch(**submit_kwargs)
 
     accepted = [
         BatchTaskAcceptedItem(
             task_id=task.task_id,
+            trace_id=_get_task_trace_id(task),
             stock_code=task.stock_code,
             status="pending",
             message=f"分析任务已加入队列: {task.stock_code}",
@@ -368,6 +389,7 @@ def _handle_async_analysis_batch(
     if len(stock_codes) == 1 and accepted:
         task_accepted = TaskAccepted(
             task_id=accepted[0].task_id,
+            trace_id=accepted[0].trace_id,
             status="pending",
             message=accepted[0].message,
         )
@@ -410,6 +432,7 @@ def _handle_sync_analysis(
             force_refresh=request.force_refresh,
             query_id=query_id,
             send_notification=getattr(request, "notify", True),
+            skills=getattr(request, "skills", None),
         )
 
         if result is None:
@@ -439,9 +462,11 @@ def _handle_sync_analysis(
 
         return AnalysisResultResponse(
             query_id=query_id,
+            trace_id=result.get("trace_id") or query_id,
             stock_code=result.get("stock_code", stock_code),
             stock_name=result.get("stock_name"),
             report=report.model_dump() if report else None,
+            diagnostic_summary=result.get("diagnostic_summary"),
             created_at=datetime.now().isoformat()
         )
 
@@ -487,6 +512,7 @@ def trigger_market_review(
             status="accepted",
             message="今日大盘复盘相关市场均为非交易日，已跳过大盘复盘",
             send_notification=request.send_notification,
+            trace_id=None,
         )
 
     lock_token = _try_acquire_market_review_lock(config)
@@ -500,16 +526,19 @@ def trigger_market_review(
         )
 
     try:
+        task_id = uuid.uuid4().hex
         task = get_task_queue().submit_background_task(
             lambda: _run_market_review_background(
                 request.send_notification,
                 override_region=override_region,
                 lock_token=lock_token,
                 config=config,
+                query_id=task_id,
             ),
             stock_code="market_review",
             stock_name="大盘复盘",
             message="大盘复盘任务已提交",
+            task_id=task_id,
         )
     except Exception:
         _release_market_review_lock(lock_token)
@@ -520,6 +549,7 @@ def trigger_market_review(
         message="大盘复盘任务已提交，完成后会保存报告并按配置推送通知",
         send_notification=request.send_notification,
         task_id=task.task_id,
+        trace_id=_get_task_trace_id(task),
     )
 
 
@@ -570,6 +600,7 @@ def get_task_list(
     task_infos = [
         TaskInfo(
             task_id=t.task_id,
+            trace_id=_get_task_trace_id(t),
             stock_code=t.stock_code,
             stock_name=t.stock_name,
             status=t.status.value,
@@ -679,6 +710,97 @@ def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _datetime_to_iso(value: Any) -> Optional[str]:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _extract_report_created_at(payload: Dict[str, Any]) -> Optional[str]:
+    report = payload.get("report")
+    if not isinstance(report, dict):
+        return None
+
+    meta = report.get("meta")
+    if not isinstance(meta, dict):
+        return None
+
+    return _datetime_to_iso(meta.get("created_at"))
+
+
+def _prepare_report_for_task_enrichment(
+    report_data: Dict[str, Any],
+    created_at: Optional[str],
+) -> Dict[str, Any]:
+    enriched_report = dict(report_data)
+    meta = dict(enriched_report.get("meta") or {})
+    if created_at and not _datetime_to_iso(meta.get("created_at")):
+        meta["created_at"] = created_at
+    enriched_report["meta"] = meta
+    return enriched_report
+
+
+def _build_task_analysis_result(task: Any) -> AnalysisResultResponse:
+    """
+    Normalize an in-memory completed task result to the public API contract.
+
+    Older AnalysisService payloads contain stock_code/stock_name/report only.
+    The status endpoint owns the task metadata, so it can supply the missing
+    response fields without waiting for the database fallback path.
+    """
+    payload = dict(task.result)
+    if not payload.get("query_id"):
+        payload["query_id"] = task.task_id
+    if not payload.get("trace_id"):
+        payload["trace_id"] = _get_task_trace_id(task) or task.task_id
+    if not payload.get("stock_code"):
+        payload["stock_code"] = task.stock_code
+
+    if not payload.get("stock_name") and getattr(task, "stock_name", None):
+        payload["stock_name"] = task.stock_name
+
+    if not payload.get("created_at"):
+        payload["created_at"] = (
+            _extract_report_created_at(payload)
+            or _datetime_to_iso(getattr(task, "created_at", None))
+            or _datetime_to_iso(getattr(task, "completed_at", None))
+            or datetime.now().isoformat()
+        )
+
+    report_data = payload.get("report")
+    stock_code = payload.get("stock_code")
+    query_id = payload.get("query_id")
+    if isinstance(report_data, dict) and stock_code and query_id:
+        context_snapshot, fundamental_snapshot = _load_sync_fundamental_sources(
+            query_id=query_id,
+            stock_code=stock_code,
+        )
+        if context_snapshot is not None or fundamental_snapshot is not None:
+            try:
+                report = _build_analysis_report(
+                    _prepare_report_for_task_enrichment(
+                        report_data,
+                        payload.get("created_at"),
+                    ),
+                    query_id,
+                    stock_code,
+                    payload.get("stock_name") or getattr(task, "stock_name", None),
+                    context_snapshot=context_snapshot,
+                    fallback_fundamental_payload=fundamental_snapshot,
+                )
+                payload["report"] = report.model_dump()
+            except Exception as e:
+                logger.debug(
+                    "enrich in-memory task report failed (fail-open): task_id=%s err=%s",
+                    getattr(task, "task_id", None),
+                    e,
+                )
+
+    return AnalysisResultResponse.model_validate(payload)
+
+
 # ============================================================
 # GET /status/{task_id} - 查询单个任务状态
 # ============================================================
@@ -723,7 +845,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
                     market_review_report = report_text
             else:
                 try:
-                    result = AnalysisResultResponse.model_validate(task.result)
+                    result = _build_task_analysis_result(task)
                 except Exception:
                     logger.warning(
                         "解析任务结果失败，回退为空返回: task_id=%s",
@@ -732,6 +854,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
 
         return TaskStatus(
             task_id=task.task_id,
+            trace_id=_get_task_trace_id(task),
             status=task.status.value,
             progress=task.progress,
             result=result,
@@ -740,6 +863,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
             stock_name=task.stock_name,
             original_query=task.original_query,
             selection_source=task.selection_source,
+            skills=getattr(task, "skills", None),
         )
     
     # 2. 从数据库查询已完成的记录
@@ -751,6 +875,26 @@ def get_analysis_status(task_id: str) -> TaskStatus:
         if records:
             record = records[0]
             raw_result = parse_json_field(record.raw_result)
+            if getattr(record, "report_type", None) == "market_review":
+                market_review_report = None
+                if isinstance(raw_result, dict):
+                    report_text = raw_result.get("raw_response") or raw_result.get("market_review_report")
+                    if isinstance(report_text, str) and report_text.strip():
+                        market_review_report = report_text
+                if not market_review_report and record.news_content:
+                    market_review_report = record.news_content
+
+                return TaskStatus(
+                    task_id=task_id,
+                    trace_id=task_id,
+                    status="completed",
+                    progress=100,
+                    result=None,
+                    market_review_report=market_review_report,
+                    error=None,
+                    stock_name=record.name,
+                )
+
             model_used = normalize_model_used(
                 (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
             )
@@ -760,21 +904,39 @@ def get_analysis_status(task_id: str) -> TaskStatus:
             stock_name = get_localized_stock_name(record.name, record.code, report_language)
 
             # Extract current_price / change_pct from context_snapshot
-            current_price = None
-            change_pct = None
+            skills = None
             context_snapshot = parse_json_field(getattr(record, 'context_snapshot', None))
             if context_snapshot and isinstance(context_snapshot, dict):
-                enhanced_context = context_snapshot.get('enhanced_context') or {}
-                realtime = enhanced_context.get('realtime') or {}
-                current_price = realtime.get('price')
-                change_pct = realtime.get('change_pct')
-                realtime_quote_raw = context_snapshot.get('realtime_quote_raw') or {}
-                if current_price is None:
-                    current_price = realtime_quote_raw.get('price')
-                if change_pct is None:
-                    change_pct = realtime_quote_raw.get('change_pct')
-                if change_pct is None:
-                    change_pct = realtime_quote_raw.get('pct_chg')
+                raw_skills = context_snapshot.get("skills")
+                if isinstance(raw_skills, list):
+                    skills = [str(skill) for skill in raw_skills]
+            realtime_fields = extract_realtime_detail_fields(context_snapshot)
+            current_price = realtime_fields.get("current_price")
+            change_pct = realtime_fields.get("change_pct")
+            fallback_fundamental = db.get_latest_fundamental_snapshot(
+                query_id=task_id,
+                code=record.code,
+            )
+            extracted_fundamental = extract_fundamental_detail_fields(
+                context_snapshot=context_snapshot,
+                fallback_fundamental_payload=fallback_fundamental,
+            )
+            extracted_boards = extract_board_detail_fields(
+                context_snapshot=context_snapshot,
+                fallback_fundamental_payload=fallback_fundamental,
+            )
+            has_board_details = bool(extracted_boards.get("belong_boards")) or extracted_boards.get("sector_rankings") is not None
+            details = None
+            if any(extracted_fundamental.values()) or has_board_details or context_snapshot is not None:
+                details = ReportDetails(
+                    news_content=getattr(record, "news_content", None),
+                    raw_result=raw_result,
+                    context_snapshot=context_snapshot,
+                    financial_report=extracted_fundamental.get("financial_report"),
+                    dividend_metrics=extracted_fundamental.get("dividend_metrics"),
+                    belong_boards=extracted_boards.get("belong_boards"),
+                    sector_rankings=extracted_boards.get("sector_rankings"),
+                )
 
             # Build report from DB record so completed tasks return real data
             report_dict = AnalysisReport(
@@ -802,19 +964,30 @@ def get_analysis_status(task_id: str) -> TaskStatus:
                     stop_loss=_stringify_report_strategy_value(getattr(record, 'stop_loss', None)),
                     take_profit=_stringify_report_strategy_value(getattr(record, 'take_profit', None)),
                 ),
+                details=details,
             ).model_dump()
             return TaskStatus(
                 task_id=task_id,
+                trace_id=task_id,
                 status="completed",
                 progress=100,
                 result=AnalysisResultResponse(
                     query_id=task_id,
+                    trace_id=task_id,
                     stock_code=record.code,
                     stock_name=stock_name,
                     report=report_dict,
+                    diagnostic_summary=build_run_diagnostic_summary(
+                        context_snapshot=context_snapshot,
+                        raw_result=raw_result,
+                        report_saved=True,
+                        query_id=task_id,
+                        stock_code=record.code,
+                    ),
                     created_at=record.created_at.isoformat() if record.created_at else datetime.now().isoformat()
                 ),
-                error=None
+                error=None,
+                skills=skills,
             )
 
     except Exception as e:
@@ -916,6 +1089,13 @@ def _build_analysis_report(
         meta_data.get("stock_code", stock_code),
         report_language,
     )
+    realtime_fields = extract_realtime_detail_fields(context_snapshot)
+    current_price = meta_data.get("current_price")
+    if current_price is None:
+        current_price = realtime_fields.get("current_price")
+    change_pct = meta_data.get("change_pct")
+    if change_pct is None:
+        change_pct = realtime_fields.get("change_pct")
 
     meta = ReportMeta(
         query_id=meta_data.get("query_id", query_id),
@@ -924,8 +1104,8 @@ def _build_analysis_report(
         report_type=meta_data.get("report_type", "detailed"),
         report_language=report_language,
         created_at=meta_data.get("created_at", datetime.now().isoformat()),
-        current_price=meta_data.get("current_price"),
-        change_pct=meta_data.get("change_pct"),
+        current_price=current_price,
+        change_pct=change_pct,
         model_used=normalize_model_used(meta_data.get("model_used")),
     )
 

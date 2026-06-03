@@ -97,8 +97,11 @@
 {% endif %}
 
 {% set chip_data = data_persp.get('chip_structure', {}) %}
-{% if chip_data %}
+{% set chip_unavailable_reason = get_chip_unavailable_reason(chip_data, report_language) if chip_data and is_chip_structure_unavailable(chip_data) else get_chip_unavailable_reason(data_persp, report_language) %}
+{% if chip_data and not is_chip_structure_unavailable(chip_data) %}
 **{{ labels.chip_label }}**: {{ chip_data.get('profit_ratio', 'N/A') }} | {{ chip_data.get('avg_cost', 'N/A') }} | {{ chip_data.get('concentration', 'N/A') }} {{ localize_chip_health(chip_data.get('chip_health', 'N/A'), report_language) }}
+{% elif chip_unavailable_reason %}
+**{{ labels.chip_label }}**: {{ chip_unavailable_reason }}
 {% endif %}
 {% endif %}
 
@@ -157,3 +160,6 @@
 {% endif %}
 
 *{{ labels.generated_at_label }}：{{ report_timestamp }}*
+{% if show_llm_model and models_used %}
+*{{ labels.analysis_model_label }}：{{ models_used|join(', ') }}*
+{% endif %}

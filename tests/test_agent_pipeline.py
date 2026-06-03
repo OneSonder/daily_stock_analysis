@@ -139,6 +139,198 @@ class TestAgentConfig(unittest.TestCase):
 
         Config._instance = None
 
+    def test_build_agent_executor_does_not_mutate_llm_route_config(self) -> None:
+        """Agent factory should not rewrite model/base_url/runtime routing fields."""
+        provided_config = SimpleNamespace(
+            agent_arch="single",
+            agent_skills=["bull_trend"],
+            agent_max_steps="10",
+            agent_orchestrator_timeout_s="120",
+            litellm_model="openai/gpt-5",
+            agent_litellm_model="anthropic/claude-3-7-sonnet-20250219",
+            openai_base_url="https://api.openai.com/v1",
+        )
+        captured: Dict[str, Any] = {}
+
+        def _mock_llm_adapter(cfg):
+            captured["cfg"] = cfg
+            return MagicMock()
+
+        fake_llm_module = types.ModuleType("src.agent.llm_adapter")
+        fake_llm_module.LLMToolAdapter = _mock_llm_adapter
+
+        fake_executor_module = types.ModuleType("src.agent.executor")
+        fake_executor_cls = MagicMock(return_value=MagicMock())
+        fake_executor_module.AgentExecutor = fake_executor_cls
+
+        skill_manager = MagicMock()
+        skill_manager.list_skills.return_value = [
+            SimpleNamespace(
+                name="bull_trend",
+                display_name="bull_trend",
+                description="bull_trend desc",
+                instructions="测试指令",
+                default_active=True,
+                default_router=True,
+                default_priority=100,
+                user_invocable=True,
+                source="builtin",
+            )
+        ]
+        skill_manager.get_skill_instructions.return_value = "测试指令"
+
+        with patch.dict(sys.modules, {
+            "litellm": MagicMock(),
+            "src.agent.llm_adapter": fake_llm_module,
+            "src.agent.executor": fake_executor_module,
+        }):
+            factory_module = importlib.import_module("src.agent.factory")
+            with patch.object(factory_module, "get_skill_manager", return_value=skill_manager), \
+                 patch.object(factory_module, "get_tool_registry", return_value=MagicMock()):
+                factory_module.build_agent_executor(provided_config)
+
+        adapter_cfg = captured.get("cfg")
+        self.assertIs(adapter_cfg, provided_config)
+        self.assertEqual(provided_config.agent_max_steps, "10")
+        self.assertEqual(provided_config.agent_orchestrator_timeout_s, "120")
+        self.assertEqual(provided_config.litellm_model, "openai/gpt-5")
+        self.assertEqual(provided_config.agent_litellm_model, "anthropic/claude-3-7-sonnet-20250219")
+        self.assertEqual(provided_config.openai_base_url, "https://api.openai.com/v1")
+        fake_executor_cls.assert_called_once()
+        kwargs = fake_executor_cls.call_args.kwargs
+        self.assertEqual(kwargs["max_steps"], 10)
+        self.assertEqual(kwargs["timeout_seconds"], 120)
+
+    def test_build_agent_executor_multi_arch_does_not_mutate_llm_route_config(self) -> None:
+        """Multi-arch path should keep provider/base_url/runtime fields unchanged."""
+        provided_config = SimpleNamespace(
+            agent_arch="multi",
+            agent_skills=["bull_trend"],
+            agent_max_steps="10",
+            agent_orchestrator_timeout_s="120",
+            litellm_model="openai/gpt-5",
+            agent_litellm_model="anthropic/claude-3-7-sonnet-20250219",
+            openai_base_url="https://api.openai.com/v1",
+            agent_orchestrator_mode="standard",
+        )
+        captured: Dict[str, Any] = {}
+
+        def _mock_llm_adapter(cfg):
+            captured["cfg"] = cfg
+            return MagicMock()
+
+        fake_llm_module = types.ModuleType("src.agent.llm_adapter")
+        fake_llm_module.LLMToolAdapter = _mock_llm_adapter
+
+        fake_orchestrator_module = types.ModuleType("src.agent.orchestrator")
+        fake_orchestrator_cls = MagicMock(return_value=MagicMock())
+        fake_orchestrator_module.AgentOrchestrator = fake_orchestrator_cls
+
+        skill_manager = MagicMock()
+        skill_manager.list_skills.return_value = [
+            SimpleNamespace(
+                name="bull_trend",
+                display_name="bull_trend",
+                description="bull_trend desc",
+                instructions="测试指令",
+                default_active=True,
+                default_router=True,
+                default_priority=100,
+                user_invocable=True,
+                source="builtin",
+            )
+        ]
+        skill_manager.get_skill_instructions.return_value = "测试指令"
+
+        with patch.dict(sys.modules, {
+            "litellm": MagicMock(),
+            "src.agent.llm_adapter": fake_llm_module,
+            "src.agent.orchestrator": fake_orchestrator_module,
+            "src.agent.executor": MagicMock(),
+        }):
+            factory_module = importlib.import_module("src.agent.factory")
+            with patch.object(factory_module, "get_skill_manager", return_value=skill_manager), \
+                 patch.object(factory_module, "get_tool_registry", return_value=MagicMock()):
+                factory_module.build_agent_executor(provided_config)
+
+        adapter_cfg = captured.get("cfg")
+        self.assertIs(adapter_cfg, provided_config)
+        self.assertEqual(provided_config.agent_max_steps, "10")
+        self.assertEqual(provided_config.agent_orchestrator_timeout_s, "120")
+        self.assertEqual(provided_config.litellm_model, "openai/gpt-5")
+        self.assertEqual(provided_config.agent_litellm_model, "anthropic/claude-3-7-sonnet-20250219")
+        self.assertEqual(provided_config.openai_base_url, "https://api.openai.com/v1")
+        fake_orchestrator_cls.assert_called_once()
+        kwargs = fake_orchestrator_cls.call_args.kwargs
+        self.assertEqual(kwargs["max_steps"], 10)
+        self.assertIs(kwargs["config"], provided_config)
+
+    def test_invalid_numeric_config_values_fallback_to_defaults_with_warning(self) -> None:
+        """Invalid agent_max_steps / agent_orchestrator_timeout_s should fallback and emit warning."""
+        provided_config = SimpleNamespace(
+            agent_arch="single",
+            agent_skills=["bull_trend"],
+            agent_max_steps="invalid-steps",
+            agent_orchestrator_timeout_s="invalid-timeout",
+            litellm_model="openai/gpt-5",
+            agent_litellm_model="anthropic/claude-3-7-sonnet-20250219",
+            openai_base_url="https://api.openai.com/v1",
+        )
+        captured: Dict[str, Any] = {}
+
+        def _mock_llm_adapter(cfg):
+            captured["cfg"] = cfg
+            return MagicMock()
+
+        fake_llm_module = types.ModuleType("src.agent.llm_adapter")
+        fake_llm_module.LLMToolAdapter = _mock_llm_adapter
+
+        fake_executor_module = types.ModuleType("src.agent.executor")
+        fake_executor_cls = MagicMock(return_value=MagicMock())
+        fake_executor_module.AgentExecutor = fake_executor_cls
+
+        skill_manager = MagicMock()
+        skill_manager.list_skills.return_value = [
+            SimpleNamespace(
+                name="bull_trend",
+                display_name="bull_trend",
+                description="bull_trend desc",
+                instructions="测试指令",
+                default_active=True,
+                default_router=True,
+                default_priority=100,
+                user_invocable=True,
+                source="builtin",
+            )
+        ]
+        skill_manager.get_skill_instructions.return_value = "测试指令"
+
+        with self.assertLogs("src.agent.factory", level="WARNING") as logs:
+            with patch.dict(sys.modules, {
+                "litellm": MagicMock(),
+                "src.agent.llm_adapter": fake_llm_module,
+                "src.agent.executor": fake_executor_module,
+            }):
+                factory_module = importlib.import_module("src.agent.factory")
+                with patch.object(factory_module, "get_skill_manager", return_value=skill_manager), \
+                     patch.object(factory_module, "get_tool_registry", return_value=MagicMock()):
+                    factory_module.build_agent_executor(provided_config)
+
+        adapter_cfg = captured.get("cfg")
+        self.assertIs(adapter_cfg, provided_config)
+        self.assertEqual(provided_config.litellm_model, "openai/gpt-5")
+        self.assertEqual(provided_config.agent_litellm_model, "anthropic/claude-3-7-sonnet-20250219")
+        self.assertEqual(provided_config.openai_base_url, "https://api.openai.com/v1")
+
+        log_output = "\n".join(logs.output)
+        self.assertIn("[AgentFactory] Invalid value for agent_max_steps", log_output)
+        self.assertIn("[AgentFactory] Invalid value for agent_orchestrator_timeout_s", log_output)
+
+        kwargs = fake_executor_cls.call_args.kwargs
+        from src.config import AGENT_MAX_STEPS_DEFAULT
+        self.assertEqual(kwargs["max_steps"], AGENT_MAX_STEPS_DEFAULT)
+        self.assertEqual(kwargs["timeout_seconds"], 0)
+
 
 class TestAgentFactorySkillBaseline(unittest.TestCase):
     """Ensure explicit skill selection does not silently re-apply the default bull-trend baseline."""
@@ -1248,6 +1440,46 @@ class TestPipelineRouting(unittest.TestCase):
             # Instead, verify analyzer.analyze was called (legacy path)
             pipeline.analyzer.analyze.assert_called_once()
 
+    def test_request_skills_auto_enable_agent_mode(self):
+        """Request-specific skills should route the stock analysis through Agent mode."""
+        with patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'):
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = False
+            mock_cfg.agent_max_steps = 5
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.searxng_base_urls = []
+            mock_cfg.searxng_public_instances_enabled = False
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = False
+            mock_config.return_value = mock_cfg
+
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.enums import ReportType
+            pipeline = StockAnalysisPipeline(
+                config=mock_cfg,
+                analysis_skills=["growth_quality"],
+            )
+            pipeline._analyze_with_agent = MagicMock(return_value=None)
+
+            pipeline.analyze_stock("600519", ReportType.SIMPLE, "q1")
+
+            pipeline._analyze_with_agent.assert_called_once()
+            self.assertEqual(pipeline.analysis_skills, ["growth_quality"])
+
 
 class TestAnalyzeWithAgentStockName(unittest.TestCase):
     """Test stock-name handling in _analyze_with_agent."""
@@ -1421,6 +1653,159 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             self.assertEqual(result.dashboard.get("decision_type"), "hold")
             self.assertEqual(result.dashboard.get("operation_advice"), "洗盘观察")
             self.assertEqual(result.dashboard.get("sentiment_score"), result.sentiment_score)
+
+    def test_analyze_with_agent_preserves_chip_structure_when_prefetch_missing(self):
+        """Agent tool chip metrics should not be cleared when prefetch chip_data is unavailable."""
+        with patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.agent.factory.build_agent_executor') as mock_build_executor:
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = True
+            mock_cfg.agent_max_steps = 10
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.searxng_base_urls = []
+            mock_cfg.searxng_public_instances_enabled = False
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = False
+            mock_cfg.report_language = "zh"
+            mock_cfg.report_integrity_enabled = False
+            mock_cfg.agent_orchestrator_timeout_s = 600
+            mock_config.return_value = mock_cfg
+
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.agent.executor import AgentResult
+            from src.enums import ReportType
+            pipeline = StockAnalysisPipeline(config=mock_cfg)
+            pipeline.search_service.is_available = False
+
+            agent_result = AgentResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "sentiment_score": 70,
+                    "trend_prediction": "震荡",
+                    "operation_advice": "持有",
+                    "decision_type": "hold",
+                    "dashboard": {
+                        "data_perspective": {
+                            "chip_structure": {
+                                "profit_ratio": "52.0%",
+                                "avg_cost": 1850.0,
+                                "concentration": "0.00%",
+                                "chip_health": "健康",
+                            }
+                        }
+                    },
+                },
+                provider="gemini",
+            )
+            mock_executor = MagicMock()
+            mock_executor.run.return_value = agent_result
+            mock_build_executor.return_value = mock_executor
+
+            result = pipeline._analyze_with_agent(
+                code="600519",
+                report_type=ReportType.SIMPLE,
+                query_id="q-agent-chip",
+                stock_name="贵州茅台",
+                realtime_quote=None,
+                chip_data=None,
+            )
+
+            self.assertIsNotNone(result)
+            dp = result.dashboard["data_perspective"]
+            self.assertEqual(dp["chip_structure"]["concentration"], "0.00%")
+            self.assertNotIn("chip_unavailable_reason", dp)
+
+    def test_analyze_with_agent_history_context_includes_diagnostic_snapshot(self):
+        """Agent 分析入库存档时应保留 diagnostics 快照，避免历史诊断返回 unknown。"""
+        with patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.core.pipeline.fill_price_position_if_needed'), \
+             patch('src.core.pipeline.stabilize_decision_with_structure'), \
+             patch('src.core.pipeline.current_diagnostic_snapshot') as mock_diagnostic_snapshot:
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = True
+            mock_cfg.agent_max_steps = 10
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.anspire_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.searxng_base_urls = []
+            mock_cfg.searxng_public_instances_enabled = False
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = True
+            mock_cfg.report_language = "zh"
+            mock_cfg.report_integrity_enabled = False
+            mock_config.return_value = mock_cfg
+
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.enums import ReportType
+            pipeline = StockAnalysisPipeline(config=mock_cfg)
+            pipeline.search_service.is_available = False
+            pipeline._ensure_agent_history = MagicMock()
+            pipeline._agent_result_to_analysis_result = MagicMock(
+                return_value=SimpleNamespace(
+                    success=True,
+                    code="588200",
+                    name="科创芯片ETF",
+                    model_used="agent-model",
+                    sentiment_score=70,
+                    operation_advice="持有",
+                    trend_prediction="震荡",
+                    analysis_summary="测试摘要",
+                )
+            )
+
+            mock_executor = MagicMock()
+            mock_executor.run.return_value = SimpleNamespace(
+                success=True,
+                provider="agent-provider",
+                dashboard={"stock_name": "科创芯片ETF"},
+            )
+            with patch('src.agent.factory.build_agent_executor', return_value=mock_executor):
+                mock_diagnostic_snapshot.return_value = {"trace_id": "trace-1391", "query_id": "q-1391"}
+                pipeline.db.save_analysis_history = MagicMock(return_value=1)
+
+                result = pipeline._analyze_with_agent(
+                    code="588200",
+                    report_type=ReportType.SIMPLE,
+                    query_id="q-1391",
+                    stock_name="科创芯片ETF",
+                    realtime_quote=None,
+                    chip_data=None,
+                )
+
+            self.assertIsNotNone(result)
+            call_kwargs = pipeline.db.save_analysis_history.call_args.kwargs
+            history_context = call_kwargs["context_snapshot"]
+            self.assertIn("diagnostics", history_context)
+            self.assertEqual(history_context["diagnostics"]["trace_id"], "trace-1391")
+            self.assertEqual(history_context["stock_name"], "科创芯片ETF")
 
 
 # ============================================================
@@ -1686,6 +2071,172 @@ class TestAgentConstructionChain(unittest.TestCase):
 
         self.assertEqual(result.content, "agent ok")
         self.assertEqual(mock_completion.call_args.kwargs["temperature"], 0.6)
+
+    @patch("src.agent.llm_adapter.Router")
+    def test_llm_adapter_omits_temperature_for_gpt5_family(self, _mock_router):
+        """Agent direct LiteLLM calls should omit temperature for strict default-temperature models."""
+        mock_cfg = SimpleNamespace(
+            agent_litellm_model="",
+            litellm_model="openai/gpt5.5-ferr",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            llm_temperature=0.2,
+            gemini_api_keys=[],
+            anthropic_api_keys=[],
+            openai_api_keys=[],
+            deepseek_api_keys=[],
+            openai_base_url=None,
+        )
+
+        from src.agent.llm_adapter import LLMToolAdapter
+        adapter = LLMToolAdapter(config=mock_cfg)
+        adapter._router = None
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="agent ok",
+                        tool_calls=[],
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        )
+
+        with patch("src.agent.llm_adapter.litellm.completion", return_value=response) as mock_completion:
+            result = adapter._call_litellm_model(
+                [{"role": "user", "content": "hi"}],
+                [],
+                "openai/gpt5.5-ferr",
+                temperature=0.2,
+            )
+
+        self.assertEqual(result.content, "agent ok")
+        self.assertNotIn("temperature", mock_completion.call_args.kwargs)
+
+    @patch("src.agent.llm_adapter.Router")
+    def test_llm_adapter_recovers_from_unsupported_temperature(self, _mock_router):
+        """Agent direct LiteLLM calls should retry once with a request-scoped parameter repair."""
+        from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
+
+        clear_litellm_generation_param_recovery_cache()
+        mock_cfg = SimpleNamespace(
+            agent_litellm_model="",
+            litellm_model="openai/custom-temp-locked-agent",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            llm_temperature=0.2,
+            gemini_api_keys=[],
+            anthropic_api_keys=[],
+            openai_api_keys=[],
+            deepseek_api_keys=[],
+            openai_base_url=None,
+        )
+
+        from src.agent.llm_adapter import LLMToolAdapter
+        adapter = LLMToolAdapter(config=mock_cfg)
+        adapter._router = None
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="agent ok",
+                        tool_calls=[],
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        )
+
+        with patch("src.agent.llm_adapter.litellm.completion") as mock_completion:
+            mock_completion.side_effect = [
+                RuntimeError("Unsupported parameter: temperature is not supported"),
+                response,
+            ]
+            result = adapter._call_litellm_model(
+                [{"role": "user", "content": "hi"}],
+                [],
+                "openai/custom-temp-locked-agent",
+                temperature=0.2,
+            )
+
+        self.assertEqual(result.content, "agent ok")
+        self.assertEqual(mock_completion.call_args_list[0].kwargs["temperature"], 0.2)
+        self.assertNotIn("temperature", mock_completion.call_args_list[1].kwargs)
+
+    @patch("src.agent.llm_adapter.Router")
+    def test_llm_adapter_legacy_router_recovery_cache_is_scoped_to_endpoint(self, mock_router):
+        """Legacy multi-key Router recoveries should not leak across base URLs."""
+        from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
+
+        clear_litellm_generation_param_recovery_cache()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="agent ok",
+                        tool_calls=[],
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        )
+        strict_router = MagicMock()
+        flex_router = MagicMock()
+        strict_router.completion.side_effect = [
+            RuntimeError("Unsupported parameter: temperature is not supported"),
+            response,
+        ]
+        flex_router.completion.return_value = response
+        mock_router.side_effect = [strict_router, flex_router]
+
+        strict_cfg = SimpleNamespace(
+            agent_litellm_model="",
+            litellm_model="openai/shared-model",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            llm_temperature=0.2,
+            gemini_api_keys=[],
+            anthropic_api_keys=[],
+            openai_api_keys=["sk-strict-key-1", "sk-strict-key-2"],
+            deepseek_api_keys=[],
+            openai_base_url="https://strict.example/v1",
+        )
+        flex_cfg = SimpleNamespace(
+            agent_litellm_model="",
+            litellm_model="openai/shared-model",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            llm_temperature=0.2,
+            gemini_api_keys=[],
+            anthropic_api_keys=[],
+            openai_api_keys=["sk-flex-key-1", "sk-flex-key-2"],
+            deepseek_api_keys=[],
+            openai_base_url="https://flex.example/v1",
+        )
+
+        from src.agent.llm_adapter import LLMToolAdapter
+
+        strict_adapter = LLMToolAdapter(config=strict_cfg)
+        strict_result = strict_adapter._call_litellm_model(
+            [{"role": "user", "content": "hi"}],
+            [],
+            "openai/shared-model",
+            temperature=0.2,
+        )
+        flex_adapter = LLMToolAdapter(config=flex_cfg)
+        flex_result = flex_adapter._call_litellm_model(
+            [{"role": "user", "content": "hi"}],
+            [],
+            "openai/shared-model",
+            temperature=0.2,
+        )
+
+        self.assertEqual(strict_result.content, "agent ok")
+        self.assertEqual(flex_result.content, "agent ok")
+        self.assertEqual(strict_router.completion.call_args_list[0].kwargs["temperature"], 0.2)
+        self.assertNotIn("temperature", strict_router.completion.call_args_list[1].kwargs)
+        self.assertEqual(flex_router.completion.call_args.kwargs["temperature"], 0.2)
 
     @patch("src.agent.llm_adapter.Router")
     def test_llm_adapter_fallback_does_not_leak_kimi_fixed_temperature(self, _mock_router):

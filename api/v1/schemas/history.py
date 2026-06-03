@@ -9,7 +9,7 @@
 2. 定义分析报告完整模型
 """
 
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,19 +29,18 @@ class HistoryItem(BaseModel):
     operation_advice: Optional[str] = Field(None, description="操作建议")
     created_at: Optional[str] = Field(None, description="创建时间")
     
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "id": 1234,
-                "query_id": "abc123",
-                "stock_code": "600519",
-                "stock_name": "贵州茅台",
-                "report_type": "detailed",
-                "sentiment_score": 75,
-                "operation_advice": "持有",
-                "created_at": "2024-01-01T12:00:00"
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "id": 1234,
+            "query_id": "abc123",
+            "stock_code": "600519",
+            "stock_name": "贵州茅台",
+            "report_type": "detailed",
+            "sentiment_score": 75,
+            "operation_advice": "持有",
+            "created_at": "2024-01-01T12:00:00"
         }
+    })
 
 
 class HistoryListResponse(BaseModel):
@@ -52,15 +51,14 @@ class HistoryListResponse(BaseModel):
     limit: int = Field(..., description="每页数量")
     items: List[HistoryItem] = Field(default_factory=list, description="记录列表")
     
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "total": 100,
-                "page": 1,
-                "limit": 20,
-                "items": []
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "total": 100,
+            "page": 1,
+            "limit": 20,
+            "items": []
         }
+    })
 
 
 class DeleteHistoryRequest(BaseModel):
@@ -82,14 +80,13 @@ class NewsIntelItem(BaseModel):
     snippet: str = Field("", description="新闻摘要（最多200字）")
     url: str = Field(..., description="新闻链接")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "title": "公司发布业绩快报，营收同比增长 20%",
-                "snippet": "公司公告显示，季度营收同比增长 20%...",
-                "url": "https://example.com/news/123"
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "title": "公司发布业绩快报，营收同比增长 20%",
+            "snippet": "公司公告显示，季度营收同比增长 20%...",
+            "url": "https://example.com/news/123"
         }
+    })
 
 
 class NewsIntelResponse(BaseModel):
@@ -98,13 +95,12 @@ class NewsIntelResponse(BaseModel):
     total: int = Field(..., description="新闻条数")
     items: List[NewsIntelItem] = Field(default_factory=list, description="新闻列表")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "total": 2,
-                "items": []
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "total": 2,
+            "items": []
         }
+    })
 
 
 class ReportMeta(BaseModel):
@@ -166,33 +162,32 @@ class AnalysisReport(BaseModel):
     strategy: Optional[ReportStrategy] = Field(None, description="策略点位区")
     details: Optional[ReportDetails] = Field(None, description="详情区")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "meta": {
-                    "query_id": "abc123",
-                    "stock_code": "600519",
-                    "stock_name": "贵州茅台",
-                    "report_type": "detailed",
-                    "report_language": "zh",
-                    "created_at": "2024-01-01T12:00:00"
-                },
-                "summary": {
-                    "analysis_summary": "技术面向好，建议持有",
-                    "operation_advice": "持有",
-                    "trend_prediction": "看多",
-                    "sentiment_score": 75,
-                    "sentiment_label": "乐观"
-                },
-                "strategy": {
-                    "ideal_buy": "1800.00",
-                    "secondary_buy": "1750.00",
-                    "stop_loss": "1700.00",
-                    "take_profit": "2000.00"
-                },
-                "details": None
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "meta": {
+                "query_id": "abc123",
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "report_type": "detailed",
+                "report_language": "zh",
+                "created_at": "2024-01-01T12:00:00"
+            },
+            "summary": {
+                "analysis_summary": "技术面向好，建议持有",
+                "operation_advice": "持有",
+                "trend_prediction": "看多",
+                "sentiment_score": 75,
+                "sentiment_label": "乐观"
+            },
+            "strategy": {
+                "ideal_buy": "1800.00",
+                "secondary_buy": "1750.00",
+                "stop_loss": "1700.00",
+                "take_profit": "2000.00"
+            },
+            "details": None
         }
+    })
 
 
 class MarkdownReportResponse(BaseModel):
@@ -200,9 +195,46 @@ class MarkdownReportResponse(BaseModel):
 
     content: str = Field(..., description="Markdown 格式的完整报告内容")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "content": "# 📊 贵州茅台 (600519) 分析报告\n\n> 分析日期：**2024-01-01**\n\n..."
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "content": "# 📊 贵州茅台 (600519) 分析报告\n\n> 分析日期：**2024-01-01**\n\n..."
         }
+    })
+
+
+class RunDiagnosticComponent(BaseModel):
+    """单个运行诊断组件摘要。"""
+
+    key: str = Field(..., description="组件键")
+    label: str = Field(..., description="组件显示名称")
+    status: str = Field(..., description="组件状态：ok/degraded/failed/unknown/not_configured/skipped")
+    message: str = Field(..., description="用户可读摘要")
+    details: Optional[Dict[str, Any]] = Field(None, description="折叠展示的诊断细节")
+
+
+class RunDiagnosticSummaryResponse(BaseModel):
+    """历史报告运行诊断摘要。"""
+
+    trace_id: Optional[str] = Field(None, description="诊断 trace ID")
+    task_id: Optional[str] = Field(None, description="任务 ID")
+    query_id: Optional[str] = Field(None, description="分析 query ID")
+    stock_code: Optional[str] = Field(None, description="股票代码")
+    trigger_source: Optional[str] = Field(None, description="触发来源")
+    status: str = Field(..., description="总体状态：normal/degraded/failed/unknown")
+    status_label: str = Field(..., description="总体状态中文标签")
+    reason: str = Field(..., description="最主要的诊断原因")
+    components: Dict[str, RunDiagnosticComponent] = Field(default_factory=dict, description="关键链路诊断组件")
+    copy_text: str = Field(..., description="可复制的脱敏排障文本")
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "trace_id": "task_abc123",
+            "query_id": "task_abc123",
+            "stock_code": "600519",
+            "status": "degraded",
+            "status_label": "部分降级",
+            "reason": "实时行情失败：timeout",
+            "components": {},
+            "copy_text": "trace_id: task_abc123\nstock_code: 600519\n...",
+        }
+    })

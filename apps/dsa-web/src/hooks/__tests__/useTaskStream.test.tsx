@@ -70,6 +70,7 @@ describe('useTaskStream', () => {
       new MessageEvent('task_progress', {
         data: JSON.stringify({
           task_id: 'task-1',
+          trace_id: 'trace-task-1',
           stock_code: '600519',
           stock_name: '贵州茅台',
           status: 'processing',
@@ -83,6 +84,7 @@ describe('useTaskStream', () => {
 
     expect(onTaskProgress).toHaveBeenCalledWith({
       taskId: 'task-1',
+      traceId: 'trace-task-1',
       stockCode: '600519',
       stockName: '贵州茅台',
       status: 'processing',

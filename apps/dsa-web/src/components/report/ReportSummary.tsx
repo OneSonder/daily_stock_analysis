@@ -4,6 +4,7 @@ import { ReportOverview } from './ReportOverview';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
+import { ReportDiagnostics } from './ReportDiagnostics';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 
 interface ReportSummaryProps {
@@ -23,6 +24,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const report: AnalysisReport = 'report' in data ? data.report : data;
   // 使用 report id，因为 queryId 在批量分析时可能重复，且历史报告详情接口需要 recordId 来获取关联资讯和详情数据
   const recordId = report.meta.id;
+  const diagnosticSummary = 'diagnosticSummary' in data ? data.diagnosticSummary : undefined;
 
   const { meta, summary, strategy, details } = report;
   const reportLanguage = normalizeReportLanguage(meta.reportLanguage);
@@ -40,6 +42,13 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         summary={summary}
         details={details}
         isHistory={isHistory}
+      />
+
+      {/* 运行诊断摘要 */}
+      <ReportDiagnostics
+        recordId={recordId}
+        summary={diagnosticSummary}
+        language={reportLanguage}
       />
 
       {/* 策略点位区 */}
