@@ -12,7 +12,7 @@
 
 import logging
 import uuid
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 
 from src.repositories.analysis_repo import AnalysisRepository
 from src.report_language import (
@@ -21,6 +21,12 @@ from src.report_language import (
     localize_operation_advice,
     localize_trend_prediction,
     normalize_report_language,
+)
+from src.services.run_diagnostics import (
+    activate_run_diagnostic_context,
+    build_run_diagnostic_summary,
+    get_current_diagnostic_context,
+    reset_run_diagnostic_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,8 +50,10 @@ class AnalysisService:
         report_type: str = "detailed",
         force_refresh: bool = False,
         query_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
         send_notification: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        skills: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行股票分析
@@ -73,6 +81,15 @@ class AnalysisService:
             # 生成 query_id
             if query_id is None:
                 query_id = uuid.uuid4().hex
+            effective_trace_id = trace_id or query_id
+            diag_token = None
+            if get_current_diagnostic_context() is None:
+                diag_token = activate_run_diagnostic_context(
+                    trace_id=effective_trace_id,
+                    query_id=query_id,
+                    stock_code=stock_code,
+                    trigger_source="api",
+                )
             
             # 获取配置
             config = get_config()
@@ -81,8 +98,10 @@ class AnalysisService:
             pipeline = StockAnalysisPipeline(
                 config=config,
                 query_id=query_id,
+                trace_id=effective_trace_id,
                 query_source="api",
                 progress_callback=progress_callback,
+                analysis_skills=skills,
             )
             
             # 确定报告类型 (API: simple/detailed/full/brief -> ReportType)
@@ -113,6 +132,8 @@ class AnalysisService:
             self.last_error = str(e)
             logger.error(f"分析股票 {stock_code} 失败: {e}", exc_info=True)
             return None
+        finally:
+            reset_run_diagnostic_context(locals().get("diag_token"))
     
     def _build_analysis_response(
         self, 
@@ -140,11 +161,31 @@ class AnalysisService:
         report_language = normalize_report_language(getattr(result, "report_language", "zh"))
         sentiment_label = get_sentiment_label(result.sentiment_score, report_language)
         stock_name = get_localized_stock_name(getattr(result, "name", None), result.code, report_language)
+        diagnostic_context = get_current_diagnostic_context()
+        trace_id = diagnostic_context.trace_id if diagnostic_context is not None else query_id
+        diagnostic_snapshot = diagnostic_context.snapshot() if diagnostic_context is not None else None
+        diagnostic_context_snapshot = getattr(result, "diagnostic_context_snapshot", None)
+        if isinstance(diagnostic_context_snapshot, dict):
+            context_snapshot = dict(diagnostic_context_snapshot)
+            if diagnostic_snapshot is not None:
+                context_snapshot["diagnostics"] = diagnostic_snapshot
+        elif diagnostic_snapshot is not None:
+            context_snapshot = {"diagnostics": diagnostic_snapshot}
+        else:
+            context_snapshot = None
+        diagnostic_summary = build_run_diagnostic_summary(
+            context_snapshot=context_snapshot,
+            raw_result=result.to_dict() if hasattr(result, "to_dict") else None,
+            report_saved=True,
+            query_id=query_id,
+            stock_code=result.code,
+        )
         
         # 构建报告结构
         report = {
             "meta": {
                 "query_id": query_id,
+                "trace_id": trace_id,
                 "stock_code": result.code,
                 "stock_name": stock_name,
                 "report_type": report_type,
@@ -175,7 +216,10 @@ class AnalysisService:
         }
         
         return {
+            "query_id": query_id,
+            "trace_id": trace_id,
             "stock_code": result.code,
             "stock_name": stock_name,
             "report": report,
+            "diagnostic_summary": diagnostic_summary,
         }

@@ -19,7 +19,10 @@ describe('TaskPanel', () => {
     const { container } = render(
       <TaskPanel
         tasks={[
-          baseTask,
+          {
+            ...baseTask,
+            traceId: 'trace-task-1',
+          },
           {
             ...baseTask,
             taskId: 'task-2',
@@ -38,6 +41,8 @@ describe('TaskPanel', () => {
     expect(screen.getByText('贵州茅台')).toBeInTheDocument();
     expect(screen.getByText('AAPL')).toBeInTheDocument();
     expect(screen.getByLabelText('任务状态：分析中')).toBeInTheDocument();
+    expect(screen.getByText('运行诊断')).toBeInTheDocument();
+    expect(screen.getAllByText('trace-task-1')).toHaveLength(2);
     expect(container.querySelector('.home-panel-card')).toBeTruthy();
     expect(container.querySelector('.home-subpanel')).toBeTruthy();
   });

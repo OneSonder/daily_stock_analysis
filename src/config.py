@@ -31,6 +31,7 @@ from src.notification_noise import (
     parse_notification_quiet_hours,
     validate_notification_timezone,
 )
+from src.llm import generation_params as llm_generation_params
 
 logger = logging.getLogger(__name__)
 
@@ -61,20 +62,6 @@ _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 # These are compatibility examples; actual availability should be validated by Anspire console/model entitlement.
 ANSPIRE_LLM_BASE_URL_DEFAULT = "https://open-gateway.anspire.cn/v6"
 ANSPIRE_LLM_MODEL_DEFAULT = "Doubao-Seed-2.0-lite"
-# Kimi K2.6 is consumed through Moonshot's OpenAI-compatible API in this
-# repository. Official references:
-# - https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart
-# - https://platform.moonshot.ai/docs/guide/compatibility#parameters-differences-in-request-body
-# - https://huggingface.co/moonshotai/Kimi-K2.6
-# - https://docs.litellm.ai/docs/providers/openai_compatible
-# Only the strict Kimi K2.6 family is normalized here; other models and
-# fallbacks continue using the configured runtime temperature.
-_FIXED_TEMPERATURE_LITELLM_MODELS: Dict[str, Dict[str, float]] = {
-    "kimi-k2.6": {
-        "thinking": 1.0,
-        "non_thinking": 0.6,
-    },
-}
 
 
 def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
@@ -103,11 +90,47 @@ def _has_gotify_base_url(value: Optional[str]) -> bool:
 
 
 AGENT_MAX_STEPS_DEFAULT = 10
+FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT = 8.0
 NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
     "ultra_short": 1,
     "short": 3,
     "medium": 7,
     "long": 30,
+}
+
+
+@dataclass(frozen=True)
+class AgentContextCompressionPreset:
+    """Preset values for visible chat history compression."""
+
+    trigger_tokens: int
+    protected_turns: int
+    summary_target_tokens: int
+    # P1 reserves this budget for future prompt-size controls; it is not
+    # enforced by the current rolling-summary state table.
+    history_budget_tokens: int
+
+
+AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE = "balanced"
+AGENT_CONTEXT_COMPRESSION_PROFILES: Dict[str, AgentContextCompressionPreset] = {
+    "cost": AgentContextCompressionPreset(
+        trigger_tokens=6000,
+        protected_turns=2,
+        summary_target_tokens=900,
+        history_budget_tokens=4000,
+    ),
+    "balanced": AgentContextCompressionPreset(
+        trigger_tokens=12000,
+        protected_turns=4,
+        summary_target_tokens=1500,
+        history_budget_tokens=8000,
+    ),
+    "long_context_raw_first": AgentContextCompressionPreset(
+        trigger_tokens=24000,
+        protected_turns=6,
+        summary_target_tokens=2600,
+        history_budget_tokens=14000,
+    ),
 }
 
 
@@ -222,6 +245,60 @@ def resolve_news_window_days(news_max_age_days: int, news_strategy_profile: Opti
     profile = normalize_news_strategy_profile(news_strategy_profile)
     profile_days = NEWS_STRATEGY_WINDOWS.get(profile, NEWS_STRATEGY_WINDOWS["short"])
     return max(1, min(max(1, int(news_max_age_days)), profile_days))
+
+
+def normalize_agent_context_compression_profile(value: Optional[str]) -> str:
+    """Normalize visible-chat context compression profile values."""
+    candidate = (value or AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE).strip().lower()
+    if candidate in AGENT_CONTEXT_COMPRESSION_PROFILES:
+        return candidate
+    logger.warning(
+        "Invalid AGENT_CONTEXT_COMPRESSION_PROFILE=%r; falling back to %s",
+        value,
+        AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE,
+    )
+    return AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE
+
+
+def get_agent_context_compression_preset(profile: Optional[str]) -> AgentContextCompressionPreset:
+    """Return the preset for a normalized profile, falling back to balanced."""
+    normalized = normalize_agent_context_compression_profile(profile)
+    return AGENT_CONTEXT_COMPRESSION_PROFILES[normalized]
+
+
+def parse_agent_context_compression_int(
+    value: Optional[str],
+    default: int,
+    *,
+    field_name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Parse compression integers; empty/invalid/out-of-range values follow preset defaults."""
+    raw_value = value
+    if raw_value is None or not str(raw_value).strip():
+        return int(default)
+    try:
+        parsed = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s=%r is not a valid integer; falling back to preset default %s",
+            field_name,
+            raw_value,
+            default,
+        )
+        return int(default)
+    if parsed < minimum or parsed > maximum:
+        logger.warning(
+            "%s=%r is outside supported range [%s, %s]; falling back to preset default %s",
+            field_name,
+            parsed,
+            minimum,
+            maximum,
+            default,
+        )
+        return int(default)
+    return parsed
 
 
 def canonicalize_llm_channel_protocol(value: Optional[str]) -> str:
@@ -349,71 +426,7 @@ def resolve_litellm_wire_model(
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Resolve a router alias to its underlying LiteLLM wire model."""
-    normalized_model = (model or "").strip()
-    if not normalized_model or not model_list:
-        return normalized_model
-
-    model_entry = _resolve_litellm_model_list_entry(normalized_model, model_list)
-    if not model_entry:
-        return normalized_model
-
-    params = model_entry.get("litellm_params", {}) or {}
-    wire_model = str(params.get("model") or "").strip()
-    if wire_model:
-        return wire_model
-    return normalized_model
-
-
-def _resolve_litellm_model_list_entry(
-    model: str,
-    model_list: Optional[List[Dict[str, Any]]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Return the Router model_list entry matching the configured alias."""
-    normalized_model = (model or "").strip()
-    if not normalized_model or not model_list:
-        return None
-
-    for entry in model_list:
-        model_name = str(entry.get("model_name") or "").strip()
-        if not model_name:
-            params = entry.get("litellm_params", {}) or {}
-            model_name = str(params.get("model") or "").strip()
-        if model_name == normalized_model:
-            return entry
-    return None
-
-
-def _extract_thinking_config(payload: Optional[Dict[str, Any]]) -> Any:
-    """Extract a thinking-mode flag from LiteLLM-style request kwargs."""
-    if not isinstance(payload, dict):
-        return None
-    extra_body = payload.get("extra_body")
-    if isinstance(extra_body, dict) and "thinking" in extra_body:
-        return extra_body.get("thinking")
-    if "thinking" in payload:
-        return payload.get("thinking")
-    return None
-
-
-def _parse_thinking_enabled(value: Any) -> Optional[bool]:
-    """Parse thinking-mode config into True/False/unknown."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"enabled", "enable", "true", "1", "on", "thinking"}:
-            return True
-        if normalized in {"disabled", "disable", "false", "0", "off", "none", "non-thinking", "non_thinking"}:
-            return False
-        return None
-    if isinstance(value, dict):
-        if "enabled" in value:
-            return _parse_thinking_enabled(value.get("enabled"))
-        if "type" in value:
-            return _parse_thinking_enabled(value.get("type"))
-    return None
+    return llm_generation_params.resolve_litellm_wire_model(model, model_list)
 
 
 def resolve_litellm_thinking_enabled(
@@ -422,19 +435,11 @@ def resolve_litellm_thinking_enabled(
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
     """Resolve whether the outgoing LiteLLM request explicitly enables thinking."""
-    thinking_config = None
-    model_entry = _resolve_litellm_model_list_entry(model, model_list)
-    if model_entry:
-        thinking_config = _extract_thinking_config(model_entry)
-        entry_params = model_entry.get("litellm_params", {}) or {}
-        entry_thinking_config = _extract_thinking_config(entry_params)
-        if entry_thinking_config is not None:
-            thinking_config = entry_thinking_config
-
-    override_thinking_config = _extract_thinking_config(request_overrides)
-    if override_thinking_config is not None:
-        thinking_config = override_thinking_config
-    return _parse_thinking_enabled(thinking_config)
+    return llm_generation_params.resolve_litellm_thinking_enabled(
+        model,
+        model_list=model_list,
+        request_overrides=request_overrides,
+    )
 
 
 def get_fixed_litellm_temperature(
@@ -443,24 +448,11 @@ def get_fixed_litellm_temperature(
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
     """Return a provider-mandated temperature for known strict models."""
-    normalized_model = resolve_litellm_wire_model(model, model_list).lower()
-    if not normalized_model:
-        return None
-    thinking_enabled = resolve_litellm_thinking_enabled(
+    return llm_generation_params.get_fixed_litellm_temperature(
         model,
         model_list=model_list,
         request_overrides=request_overrides,
     )
-    model_parts = [part for part in re.split(r"[/:\s]+", normalized_model) if part]
-    for model_name, temperatures in _FIXED_TEMPERATURE_LITELLM_MODELS.items():
-        if any(part == model_name or part.startswith(f"{model_name}-") for part in model_parts):
-            if thinking_enabled is False and temperatures.get("non_thinking") is not None:
-                return temperatures["non_thinking"]
-            if temperatures.get("thinking") is not None:
-                return temperatures["thinking"]
-            if temperatures.get("non_thinking") is not None:
-                return temperatures["non_thinking"]
-    return None
 
 
 def normalize_litellm_temperature(
@@ -472,16 +464,13 @@ def normalize_litellm_temperature(
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> float:
     """Normalize temperature before sending a LiteLLM request."""
-    fixed_temperature = get_fixed_litellm_temperature(
+    return llm_generation_params.normalize_litellm_temperature(
         model,
+        temperature,
+        default=default,
         model_list=model_list,
         request_overrides=request_overrides,
     )
-    if fixed_temperature is not None:
-        return fixed_temperature
-    if temperature is None:
-        return default
-    return float(temperature)
 
 
 def resolve_unified_llm_temperature(model: str) -> float:
@@ -631,9 +620,12 @@ class Config:
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
     tickflow_api_key: Optional[str] = None
+    finnhub_api_key: Optional[str] = None
+    alphavantage_api_key: Optional[str] = None
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
     longbridge_access_token: Optional[str] = None
+    stock_index_remote_update_enabled: bool = True
 
     # === AI 分析配置 ===
     # LiteLLM unified model config (provider/model format, e.g. gemini/gemini-3.1-pro-preview)
@@ -726,6 +718,10 @@ class Config:
     agent_memory_enabled: bool = False  # Enable memory & calibration system
     agent_skill_autoweight: bool = True  # Auto-weight skills by backtest performance
     agent_skill_routing: str = "auto"  # Skill routing: 'auto' (regime-based) or 'manual'
+    agent_context_compression_enabled: bool = False  # Compress visible chat history before Agent calls
+    agent_context_compression_profile: str = AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE
+    agent_context_compression_trigger_tokens: int = 12000
+    agent_context_protected_turns: int = 4
     agent_event_monitor_enabled: bool = False  # Enable periodic event-driven alert checks in schedule mode
     agent_event_monitor_interval_minutes: int = 5  # Polling interval for event monitor background checks
     agent_event_alert_rules_json: str = ""  # JSON array of serialized EventMonitor rules
@@ -811,6 +807,7 @@ class Config:
 
     # 仅分析结果摘要：true 时只推送汇总，不含个股详情（Issue #262）
     report_summary_only: bool = False
+    report_show_llm_model: bool = True
 
     # Report Engine P0: Jinja2 renderer and integrity checks
     report_templates_dir: str = "templates"  # Template directory (relative to project root)
@@ -879,8 +876,9 @@ class Config:
     schedule_run_immediately: bool = True     # 启动时是否立即执行一次
     run_immediately: bool = True              # 启动时是否立即执行一次（非定时模式）
     market_review_enabled: bool = True        # 是否启用大盘复盘
-    # 大盘复盘市场区域：cn(A股)、us(美股)、both(两者)，us 适合仅关注美股的用户
+    # 大盘复盘市场区域：cn(A股)、hk(港股)、us(美股)、both(三市场)，us 适合仅关注美股的用户
     market_review_region: str = "cn"
+    market_review_color_scheme: str = "green_up"
     # 交易日检查：默认启用，非交易日跳过执行；设为 false 或 --force-run 可强制执行（Issue #373）
     trading_day_check_enabled: bool = True
 
@@ -909,9 +907,9 @@ class Config:
     # 全局总开关；关闭时返回 not_supported 并保持主流程无变化
     enable_fundamental_pipeline: bool = True
     # 基本面阶段总预算（秒）
-    fundamental_stage_timeout_seconds: float = 1.5
+    fundamental_stage_timeout_seconds: float = FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT
     # 单能力源调用超时（秒）
-    fundamental_fetch_timeout_seconds: float = 0.8
+    fundamental_fetch_timeout_seconds: float = 3.0
     # 单能力失败重试次数（已包含首次）
     fundamental_retry_max: int = 1
     # 基本面上下文短 TTL（秒）
@@ -974,15 +972,6 @@ class Config:
     # Telegram 机器人 - 已有 telegram_bot_token, telegram_chat_id
     telegram_webhook_secret: Optional[str] = None   # Webhook 密钥
 
-    # === HSI 扫描配置 ===
-    hsi_scan_enabled: bool = False                  # 是否启用定时 HSI 扫描
-    hsi_scan_schedule_time: str = "09:30"           # HSI 扫描每日执行时间 (HH:MM)
-    hsi_scan_conditions: str = "s1_breakout,s2_breakout"  # 默认扫描条件
-    hsi_scan_period: str = "1y"                     # 历史数据周期
-    hsi_scan_max_workers: int = 8                   # 并发线程数
-    hsi_scan_notify: bool = True                    # 扫描结果是否推送通知
-    hsi_scan_check_trading_day: bool = True         # 是否跳过休市日
-
     # === 配置校验模式 ===
     # CONFIG_VALIDATE_MODE=warn (default): log all issues but always continue startup
     # CONFIG_VALIDATE_MODE=strict: exit(1) when any "error" severity issue is found
@@ -1031,6 +1020,11 @@ class Config:
                 self.agent_skill_routing, self._VALID_SKILL_ROUTING,
             )
             object.__setattr__(self, "agent_skill_routing", "auto")
+        normalized_profile = normalize_agent_context_compression_profile(
+            self.agent_context_compression_profile
+        )
+        if normalized_profile != self.agent_context_compression_profile:
+            object.__setattr__(self, "agent_context_compression_profile", normalized_profile)
 
     # 单例实例存储
     _instance: Optional['Config'] = None
@@ -1118,16 +1112,7 @@ class Config:
             for c in stock_list_str.split(',')
             if (c or "").strip()
         ]
-
-        # 特殊值 HSI 展开为恒生指数成分股
-        if len(stock_list) == 1 and stock_list[0] == 'HSI':
-            try:
-                from src.services.hsi_scanner import HSI_STOCKS
-                stock_list = [item['code'] for item in HSI_STOCKS]
-                logger.info("STOCK_LIST=HSI 已展开为 %d 只恒生指数成分股", len(stock_list))
-            except ImportError:
-                logger.warning("无法导入 hsi_scanner 模块，STOCK_LIST=HSI 展开失败")
-
+        
         # 如果没有配置，使用默认的示例股票
         if not stock_list:
             stock_list = ['600519', '000001', '300750']
@@ -1301,6 +1286,26 @@ class Config:
             os.getenv('AGENT_LITELLM_MODEL', ''),
             configured_models=set(get_configured_llm_models(llm_model_list)),
         )
+        agent_context_compression_profile = normalize_agent_context_compression_profile(
+            os.getenv('AGENT_CONTEXT_COMPRESSION_PROFILE')
+        )
+        agent_context_compression_preset = get_agent_context_compression_preset(
+            agent_context_compression_profile
+        )
+        agent_context_compression_trigger_tokens = parse_agent_context_compression_int(
+            os.getenv('AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS'),
+            agent_context_compression_preset.trigger_tokens,
+            field_name='AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+            minimum=1000,
+            maximum=200000,
+        )
+        agent_context_protected_turns = parse_agent_context_compression_int(
+            os.getenv('AGENT_CONTEXT_PROTECTED_TURNS'),
+            agent_context_compression_preset.protected_turns,
+            field_name='AGENT_CONTEXT_PROTECTED_TURNS',
+            minimum=1,
+            maximum=20,
+        )
 
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
@@ -1393,7 +1398,11 @@ class Config:
         report_language_raw = cls._resolve_report_language_env_value(
             preexisting_report_language
         )
-        
+        report_show_llm_model_raw = os.getenv('REPORT_SHOW_LLM_MODEL')
+        report_show_llm_model = parse_env_bool(report_show_llm_model_raw, default=True)
+        if report_show_llm_model_raw is not None and not report_show_llm_model_raw.strip():
+            report_show_llm_model = False
+
         return cls(
             stock_list=stock_list,
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
@@ -1401,9 +1410,15 @@ class Config:
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
+            finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
+            alphavantage_api_key=os.getenv('ALPHAVANTAGE_API_KEY') or None,
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
             longbridge_app_secret=os.getenv('LONGBRIDGE_APP_SECRET') or None,
             longbridge_access_token=os.getenv('LONGBRIDGE_ACCESS_TOKEN') or None,
+            stock_index_remote_update_enabled=parse_env_bool(
+                os.getenv('STOCK_INDEX_REMOTE_UPDATE_ENABLED'),
+                default=True,
+            ),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
             llm_temperature=resolve_unified_llm_temperature(litellm_model),
@@ -1501,6 +1516,13 @@ class Config:
                 os.getenv('AGENT_SKILL_ROUTING')
                 or os.getenv('AGENT_STRATEGY_ROUTING', 'auto')
             ).lower(),
+            agent_context_compression_enabled=parse_env_bool(
+                os.getenv('AGENT_CONTEXT_COMPRESSION_ENABLED'),
+                default=False,
+            ),
+            agent_context_compression_profile=agent_context_compression_profile,
+            agent_context_compression_trigger_tokens=agent_context_compression_trigger_tokens,
+            agent_context_protected_turns=agent_context_protected_turns,
             agent_event_monitor_enabled=os.getenv('AGENT_EVENT_MONITOR_ENABLED', 'false').lower() == 'true',
             agent_event_monitor_interval_minutes=parse_env_int(
                 os.getenv('AGENT_EVENT_MONITOR_INTERVAL_MINUTES'),
@@ -1578,6 +1600,7 @@ class Config:
             report_type=cls._parse_report_type(os.getenv('REPORT_TYPE', 'simple')),
             report_language=cls._parse_report_language(report_language_raw),
             report_summary_only=os.getenv('REPORT_SUMMARY_ONLY', 'false').lower() == 'true',
+            report_show_llm_model=report_show_llm_model,
             report_templates_dir=os.getenv('REPORT_TEMPLATES_DIR', 'templates'),
             report_renderer_enabled=os.getenv('REPORT_RENDERER_ENABLED', 'false').lower() == 'true',
             report_integrity_enabled=os.getenv('REPORT_INTEGRITY_ENABLED', 'true').lower() == 'true',
@@ -1652,6 +1675,9 @@ class Config:
             market_review_region=cls._parse_market_review_region(
                 os.getenv('MARKET_REVIEW_REGION', 'cn')
             ),
+            market_review_color_scheme=cls._parse_market_review_color_scheme(
+                os.getenv('MARKET_REVIEW_COLOR_SCHEME', 'green_up')
+            ),
             trading_day_check_enabled=os.getenv('TRADING_DAY_CHECK_ENABLED', 'true').lower() != 'false',
             webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
             webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
@@ -1677,14 +1703,6 @@ class Config:
             wecom_agent_id=os.getenv('WECOM_AGENT_ID'),
             # Telegram
             telegram_webhook_secret=os.getenv('TELEGRAM_WEBHOOK_SECRET'),
-            # HSI 扫描配置
-            hsi_scan_enabled=os.getenv('HSI_SCAN_ENABLED', 'false').lower() not in ('0', 'false', 'no', 'off'),
-            hsi_scan_schedule_time=os.getenv('HSI_SCAN_SCHEDULE_TIME', '09:30'),
-            hsi_scan_conditions=os.getenv('HSI_SCAN_CONDITIONS', 's1_breakout,s2_breakout'),
-            hsi_scan_period=os.getenv('HSI_SCAN_PERIOD', '1y'),
-            hsi_scan_max_workers=int(os.getenv('HSI_SCAN_MAX_WORKERS', '8')),
-            hsi_scan_notify=os.getenv('HSI_SCAN_NOTIFY', 'true').lower() not in ('0', 'false', 'no', 'off'),
-            hsi_scan_check_trading_day=os.getenv('HSI_SCAN_CHECK_TRADING_DAY', 'true').lower() not in ('0', 'false', 'no', 'off'),
             # Discord 机器人扩展配置
             discord_bot_status=os.getenv('DISCORD_BOT_STATUS', 'A股智能分析 | /help'),
             # 实时行情增强数据配置
@@ -1706,13 +1724,13 @@ class Config:
             enable_fundamental_pipeline=os.getenv('ENABLE_FUNDAMENTAL_PIPELINE', 'true').lower() == 'true',
             fundamental_stage_timeout_seconds=parse_env_float(
                 os.getenv('FUNDAMENTAL_STAGE_TIMEOUT_SECONDS'),
-                1.5,
+                FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT,
                 field_name='FUNDAMENTAL_STAGE_TIMEOUT_SECONDS',
                 minimum=0.0,
             ),
             fundamental_fetch_timeout_seconds=parse_env_float(
                 os.getenv('FUNDAMENTAL_FETCH_TIMEOUT_SECONDS'),
-                0.8,
+                3.0,
                 field_name='FUNDAMENTAL_FETCH_TIMEOUT_SECONDS',
                 minimum=0.0,
             ),
@@ -2209,6 +2227,19 @@ class Config:
         return 'cn'
 
     @classmethod
+    def _parse_market_review_color_scheme(cls, value: str) -> str:
+        """Parse market-review index change color scheme."""
+        import logging
+        v = (value or 'green_up').strip().lower().replace('-', '_')
+        if v in ('green_up', 'red_up'):
+            return v
+        logging.getLogger(__name__).warning(
+            "MARKET_REVIEW_COLOR_SCHEME 配置值 '%s' 无效，已回退为默认值 'green_up'（合法值：green_up / red_up）",
+            value,
+        )
+        return 'green_up'
+
+    @classmethod
     def _parse_md2img_engine(cls, value: str) -> str:
         """Parse MD2IMG_ENGINE, fallback to wkhtmltoimage for invalid values (Issue #455)."""
         v = (value or 'wkhtmltoimage').strip().lower()
@@ -2328,15 +2359,6 @@ class Config:
             for c in stock_list_str.split(',')
             if (c or "").strip()
         ]
-
-        # 特殊值 HSI 展开为恒生指数成分股
-        if len(stock_list) == 1 and stock_list[0] == 'HSI':
-            try:
-                from src.services.hsi_scanner import HSI_STOCKS
-                stock_list = [item['code'] for item in HSI_STOCKS]
-                logger.info("STOCK_LIST=HSI 已展开为 %d 只恒生指数成分股", len(stock_list))
-            except ImportError:
-                logger.warning("无法导入 hsi_scanner 模块，STOCK_LIST=HSI 展开失败")
 
         if not stock_list:
             stock_list = ['000001']

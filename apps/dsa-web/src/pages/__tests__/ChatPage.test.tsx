@@ -20,12 +20,16 @@ const {
   mockGetSkills,
   mockDeleteChatSession,
   mockSendChat,
+  mockGetSystemConfig,
+  mockUpdateSystemConfig,
   mockDownloadSession,
   mockFormatSessionAsMarkdown,
 } = vi.hoisted(() => ({
   mockGetSkills: vi.fn(),
   mockDeleteChatSession: vi.fn(),
   mockSendChat: vi.fn(),
+  mockGetSystemConfig: vi.fn(),
+  mockUpdateSystemConfig: vi.fn(),
   mockDownloadSession: vi.fn(),
   mockFormatSessionAsMarkdown: vi.fn(),
 }));
@@ -65,6 +69,13 @@ vi.mock('../../api/agent', () => ({
     getSkills: mockGetSkills,
     deleteChatSession: mockDeleteChatSession,
     sendChat: mockSendChat,
+  },
+}));
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getConfig: mockGetSystemConfig,
+    update: mockUpdateSystemConfig,
   },
 }));
 
@@ -147,6 +158,27 @@ beforeEach(() => {
   });
   mockDeleteChatSession.mockResolvedValue(undefined);
   mockSendChat.mockResolvedValue({ success: true });
+  mockGetSystemConfig.mockResolvedValue({
+    configVersion: 'cfg-v1',
+    maskToken: 'mask-token',
+    items: [
+      {
+        key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+        value: 'false',
+        rawValueExists: true,
+        isMasked: false,
+      },
+    ],
+  });
+  mockUpdateSystemConfig.mockResolvedValue({
+    success: true,
+    configVersion: 'cfg-v2',
+    appliedCount: 1,
+    skippedMaskedCount: 0,
+    reloadTriggered: true,
+    updatedKeys: ['AGENT_CONTEXT_COMPRESSION_ENABLED'],
+    warnings: [],
+  });
   mockDownloadSession.mockImplementation(() => {});
   mockFormatSessionAsMarkdown.mockReturnValue('# exported session');
 });
@@ -164,6 +196,91 @@ describe('ChatPage', () => {
     expect(screen.getByTestId('chat-message-scroll')).toBeInTheDocument();
     expect(mockLoadInitialSession).toHaveBeenCalled();
     expect(mockClearCompletionBadge).toHaveBeenCalled();
+  });
+
+  it('loads and saves the global context compression setting from the chat input area', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const compressionToggle = await screen.findByRole('checkbox', { name: /上下文压缩/ });
+
+    await waitFor(() => {
+      expect(compressionToggle).not.toBeDisabled();
+    });
+
+    expect(compressionToggle).not.toBeChecked();
+
+    fireEvent.click(compressionToggle);
+
+    await waitFor(() => {
+      expect(mockUpdateSystemConfig).toHaveBeenCalledWith({
+        configVersion: 'cfg-v1',
+        maskToken: 'mask-token',
+        reloadNow: true,
+        items: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+            value: 'true',
+          },
+        ],
+      });
+    });
+
+    expect(compressionToggle).toBeChecked();
+    expect(screen.getByText('已启用')).toBeInTheDocument();
+  });
+
+  it('rolls back the context compression switch when saving fails', async () => {
+    mockGetSystemConfig.mockResolvedValue({
+      configVersion: 'cfg-v1',
+      maskToken: 'mask-token',
+      items: [
+        {
+          key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+          value: 'true',
+          rawValueExists: true,
+          isMasked: false,
+        },
+      ],
+    });
+    mockUpdateSystemConfig.mockRejectedValue(
+      createParsedApiError({
+        title: '保存失败',
+        message: '配置服务不可用',
+        category: 'unknown',
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const compressionToggle = await screen.findByRole('checkbox', { name: /上下文压缩/ });
+
+    await waitFor(() => {
+      expect(compressionToggle).toBeChecked();
+      expect(compressionToggle).not.toBeDisabled();
+    });
+
+    fireEvent.click(compressionToggle);
+
+    await waitFor(() => {
+      expect(mockUpdateSystemConfig).toHaveBeenCalledWith(expect.objectContaining({
+        items: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_ENABLED',
+            value: 'false',
+          },
+        ],
+      }));
+      expect(compressionToggle).toBeChecked();
+    });
+    expect(screen.getByText('配置服务不可用')).toBeInTheDocument();
   });
 
   it('switches session when clicking anywhere on the session card', async () => {

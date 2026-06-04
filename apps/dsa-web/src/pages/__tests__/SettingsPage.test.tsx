@@ -21,6 +21,7 @@ const {
   applyPartialUpdate,
   refreshAfterExternalSave,
   refreshStatus,
+  settingsPanelErrorBoundary,
   useAuthMock,
   useSystemConfigMock,
   webBuildInfoMock,
@@ -41,6 +42,7 @@ const {
   applyPartialUpdate: vi.fn(),
   refreshAfterExternalSave: vi.fn(),
   refreshStatus: vi.fn(),
+  settingsPanelErrorBoundary: vi.fn(),
   useAuthMock: vi.fn(),
   useSystemConfigMock: vi.fn(),
   webBuildInfoMock: {
@@ -139,8 +141,45 @@ vi.mock('../../components/settings', () => ({
       ))}
     </nav>
   ),
-  SettingsField: ({ item }: { item: { key: string } }) => <div>{item.key}</div>,
+  SettingsField: ({
+    item,
+  }: {
+    item: {
+      key: string;
+      schema?: {
+        description?: string;
+        options?: Array<string | { label: string; value: string }>;
+      };
+    };
+  }) => (
+    <div>
+      <div>{item.key}</div>
+      {item.schema?.description ? <p>{item.schema.description}</p> : null}
+      {item.schema?.options?.map((option) => {
+        const label = typeof option === 'string' ? option : option.label;
+        const value = typeof option === 'string' ? option : option.value;
+        return <span key={`${item.key}-${value}`}>{label}</span>;
+      })}
+    </div>
+  ),
   SettingsLoading: () => <div>loading</div>,
+  SettingsPanelErrorBoundary: ({
+    title,
+    diagnosticHint,
+    children,
+  }: {
+    title: string;
+    diagnosticHint?: React.ReactNode;
+    children: React.ReactNode;
+  }) => {
+    settingsPanelErrorBoundary(title);
+    return (
+      <>
+        {diagnosticHint ? <div>{diagnosticHint}</div> : null}
+        {children}
+      </>
+    );
+  },
   SettingsSectionCard: ({
     title,
     description,
@@ -578,6 +617,90 @@ describe('SettingsPage', () => {
     expect(screen.getByText('AGENT_ORCHESTRATOR_TIMEOUT_S')).toBeInTheDocument();
     expect(screen.getByText('AGENT_DEEP_RESEARCH_BUDGET')).toBeInTheDocument();
     expect(screen.getByText('AGENT_EVENT_MONITOR_ENABLED')).toBeInTheDocument();
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('Agent 设置');
+  });
+
+  it('renders context compression profile labels and blank preset guidance in agent settings', () => {
+    const configState = buildSystemConfigState();
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'agent',
+      itemsByCategory: {
+        ...configState.itemsByCategory,
+        agent: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+            value: 'balanced',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+              category: 'agent',
+              dataType: 'string',
+              uiControl: 'select',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [
+                { label: '成本优先', value: 'cost' },
+                { label: '均衡推荐', value: 'balanced' },
+                { label: '长上下文原文优先', value: 'long_context_raw_first' },
+              ],
+              validation: {
+                enum: ['cost', 'balanced', 'long_context_raw_first'],
+              },
+              displayOrder: 72,
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1000 },
+              displayOrder: 73,
+              description: '估算历史 token 超过该值时触发摘要；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1 },
+              displayOrder: 74,
+              description: '压缩时最近 N 个用户轮次及其后的回复保持原文；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+        ],
+      },
+    }));
+
+    render(<SettingsPage />);
+
+    expect(screen.getByText('AGENT_CONTEXT_COMPRESSION_PROFILE')).toBeInTheDocument();
+    expect(screen.getByText('成本优先')).toBeInTheDocument();
+    expect(screen.getByText('均衡推荐')).toBeInTheDocument();
+    expect(screen.getByText('长上下文原文优先')).toBeInTheDocument();
+    expect(screen.getByText(/估算历史 token 超过该值时触发摘要/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
+    expect(screen.getByText(/压缩时最近 N 个用户轮次及其后的回复保持原文/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
   });
 
   it('reset button semantic: discards local changes without network request', () => {
@@ -633,6 +756,27 @@ describe('SettingsPage', () => {
 
     expect(screen.getByText('通知测试面板:WECHAT_WEBHOOK_URL')).toBeInTheDocument();
     expect(screen.getByText('WECHAT_WEBHOOK_URL')).toBeInTheDocument();
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('通知测试');
+    expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('通知设置');
+  });
+
+  it('uses browser and backend logs in settings panel diagnostic hints outside desktop runtime', () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'notification' }));
+
+    render(<SettingsPage />);
+
+    expect(screen.getAllByText(/浏览器开发者工具控制台与后端日志/)).toHaveLength(2);
+    expect(screen.queryByText('desktop.log')).not.toBeInTheDocument();
+  });
+
+  it('uses desktop log in settings panel diagnostic hints during desktop runtime', () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'notification' }));
+    (window as { dsaDesktop?: unknown }).dsaDesktop = createDesktopRuntime();
+
+    render(<SettingsPage />);
+
+    expect(screen.getAllByText('desktop.log')).toHaveLength(2);
+    expect(screen.queryByText(/浏览器开发者工具控制台与后端日志/)).not.toBeInTheDocument();
   });
 
   it('renders env backup actions outside desktop runtime', () => {

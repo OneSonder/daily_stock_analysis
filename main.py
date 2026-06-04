@@ -23,6 +23,7 @@ A股自选股智能分析系统 - 主调度程序
 """
 from __future__ import annotations
 
+import multiprocessing
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -234,7 +235,6 @@ def parse_arguments() -> argparse.Namespace:
   python main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
   python main.py --schedule         # 启用定时任务模式
   python main.py --market-review    # 仅运行大盘复盘
-  python main.py --scan-hsi         # 运行 HSI 成分股信号扫描
         '''
     )
 
@@ -355,43 +355,6 @@ def parse_arguments() -> argparse.Namespace:
         help='不保存分析上下文快照'
     )
 
-    # === HSI Scan ===
-    parser.add_argument(
-        '--scan-hsi',
-        action='store_true',
-        help='运行 HSI 成分股信号扫描（S1/S2 突破信号）'
-    )
-    parser.add_argument(
-        '--scan-period',
-        type=str,
-        default='1y',
-        help='HSI 扫描数据周期（默认 1y）'
-    )
-    parser.add_argument(
-        '--scan-conditions',
-        type=str,
-        default='close_vs_entry',
-        help='HSI 扫描匹配条件，逗号分隔：close_vs_entry,close_vs_s2_entry,s1_breakout,s2_breakout,s1_exit,s2_exit'
-    )
-    parser.add_argument(
-        '--scan-output',
-        type=str,
-        choices=['table', 'json'],
-        default='table',
-        help='HSI 扫描输出格式（默认 table）'
-    )
-    parser.add_argument(
-        '--scan-notify',
-        action='store_true',
-        help='HSI 扫描结果通过通知渠道推送'
-    )
-    parser.add_argument(
-        '--scan-max-workers',
-        type=int,
-        default=8,
-        help='HSI 扫描并发线程数（默认 8）'
-    )
-
     # === Backtest ===
     parser.add_argument(
         '--backtest',
@@ -485,6 +448,23 @@ def _run_market_review_with_shared_lock(
         release_market_review_lock(lock_token)
 
 
+def _refresh_stock_index_cache_for_analysis(config: Config) -> None:
+    """Best-effort stock-index refresh for CLI/scheduled analysis paths."""
+    try:
+        from src.services.stock_index_remote_service import (
+            refresh_remote_stock_index_cache,
+            settings_from_config,
+        )
+
+        result = refresh_remote_stock_index_cache(settings_from_config(config))
+        if result.refreshed:
+            logger.info("[stock-index] 分析前已刷新股票索引缓存: %s", result.cache_path)
+        elif result.error:
+            logger.debug("[stock-index] 分析前刷新未完成，继续使用本地索引: %s", result.error)
+    except Exception as exc:  # noqa: BLE001 - stock index freshness must not block analysis.
+        logger.warning("[stock-index] 分析前刷新股票索引失败，继续执行分析: %s", exc)
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
@@ -501,6 +481,8 @@ def run_full_analysis(
     from src.core.pipeline import StockAnalysisPipeline
 
     try:
+        _refresh_stock_index_cache_for_analysis(config)
+
         # Issue #529: Hot-reload STOCK_LIST from .env on each scheduled run
         if stock_codes is None:
             config.refresh_stock_list()
@@ -899,36 +881,6 @@ def main() -> int:
             logger.info("\n用户中断，程序退出")
         return 0
 
-    # === 模式：HSI 信号扫描 ===
-    if getattr(args, 'scan_hsi', False):
-        logger.info("模式: HSI 成分股信号扫描")
-        from src.services.hsi_scanner import scan_hsi, format_scan_report
-
-        payload = scan_hsi(
-            period=args.scan_period,
-            conditions=args.scan_conditions,
-            max_workers=args.scan_max_workers,
-        )
-
-        if args.scan_output == 'json':
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            report = format_scan_report(payload)
-            print(report)
-
-        if getattr(args, 'scan_notify', False):
-            from src.notification import NotificationService
-            notifier = NotificationService(config)
-            report = format_scan_report(payload)
-            if notifier.is_available():
-                notifier.send(report, route_type="report")
-                logger.info("HSI 扫描结果已通过通知渠道推送")
-            else:
-                logger.warning("未配置通知渠道，跳过推送")
-
-        logger.info("HSI 扫描完成")
-        return 0
-
     try:
         # 模式0: 回测
         if getattr(args, 'backtest', False):
@@ -1005,48 +957,23 @@ def main() -> int:
 
             background_tasks = []
             if getattr(config, 'agent_event_monitor_enabled', False):
-                from src.agent.events import build_event_monitor_from_config, run_event_monitor_once
+                from src.services.alert_worker import AlertWorker
 
-                monitor = build_event_monitor_from_config(config)
-                if monitor is not None:
-                    interval_minutes = max(1, getattr(config, 'agent_event_monitor_interval_minutes', 5))
+                interval_minutes = max(1, getattr(config, 'agent_event_monitor_interval_minutes', 5))
+                alert_worker = AlertWorker(config_provider=_reload_runtime_config)
 
-                    def event_monitor_task():
-                        triggered = run_event_monitor_once(monitor)
-                        if triggered:
-                            logger.info("[EventMonitor] 本轮触发 %d 条提醒", len(triggered))
-
-                    background_tasks.append({
-                        "task": event_monitor_task,
-                        "interval_seconds": interval_minutes * 60,
-                        "run_immediately": True,
-                        "name": "agent_event_monitor",
-                    })
-                else:
-                    logger.info("EventMonitor 已启用，但未加载到有效规则，跳过后台提醒任务")
-
-            if getattr(config, 'hsi_scan_enabled', False):
-                from src.services.hsi_scanner import scan_hsi_and_notify
-
-                hsi_scan_interval = 30 * 60  # every 30 minutes during market hours
-
-                def hsi_scan_task():
-                    payload = scan_hsi_and_notify(
-                        period=getattr(config, 'hsi_scan_period', '1y'),
-                        conditions=getattr(config, 'hsi_scan_conditions', 's1_breakout,s2_breakout'),
-                        max_workers=getattr(config, 'hsi_scan_max_workers', 8),
-                        check_trading_day=getattr(config, 'hsi_scan_check_trading_day', True),
-                    )
-                    if not payload.get('skipped'):
-                        logger.info("[HSI Scan] 本轮匹配 %d 只股票", len(payload.get('matches', [])))
+                def event_monitor_task():
+                    stats = alert_worker.run_once()
+                    triggered_count = stats.get("triggered", 0)
+                    if triggered_count:
+                        logger.info("[EventMonitor] 本轮触发 %d 条提醒", triggered_count)
 
                 background_tasks.append({
-                    "task": hsi_scan_task,
-                    "interval_seconds": hsi_scan_interval,
+                    "task": event_monitor_task,
+                    "interval_seconds": interval_minutes * 60,
                     "run_immediately": True,
-                    "name": "hsi_scan",
+                    "name": "agent_event_monitor",
                 })
-                logger.info("HSI 扫描已启用，间隔 %d 分钟", hsi_scan_interval // 60)
 
             run_with_schedule(
                 task=scheduled_task,
@@ -1087,4 +1014,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     sys.exit(main())

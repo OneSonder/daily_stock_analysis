@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../utils/cn';
 import { agentApi } from '../api/agent';
+import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, Badge, Button, ConfirmDialog, EmptyState, InlineAlert, ScrollArea, Tooltip } from '../components/common';
 import { getParsedApiError } from '../api/error';
 import type { SkillInfo } from '../api/agent';
@@ -36,6 +37,7 @@ const QUICK_QUESTIONS = [
 ];
 
 const MAX_SELECTED_SKILLS = 3;
+const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
 
 const getMessageSkillNames = (msg: Message): string[] => {
   if (msg.skillNames?.length) return msg.skillNames;
@@ -62,6 +64,12 @@ const ChatPage: React.FC = () => {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [contextCompressionEnabled, setContextCompressionEnabled] = useState(false);
+  const [contextCompressionLoaded, setContextCompressionLoaded] = useState(false);
+  const [contextCompressionSaving, setContextCompressionSaving] = useState(false);
+  const [contextCompressionConfigVersion, setContextCompressionConfigVersion] = useState('');
+  const [contextCompressionMaskToken, setContextCompressionMaskToken] = useState('******');
+  const [contextCompressionError, setContextCompressionError] = useState<string | null>(null);
   const [copiedMessages, setCopiedMessages] = useState<Set<string>>(new Set());
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const copyResetTimerRef = useRef<Partial<Record<string, number>>>({});
@@ -192,6 +200,77 @@ const ChatPage: React.FC = () => {
         console.error('Failed to load chat skills:', error);
       });
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    void systemConfigApi.getConfig(false)
+      .then((config) => {
+        if (!active) {
+          return;
+        }
+        const enabledItem = config.items.find((item) => item.key === CONTEXT_COMPRESSION_CONFIG_KEY);
+        setContextCompressionEnabled(String(enabledItem?.value ?? '').trim().toLowerCase() === 'true');
+        setContextCompressionConfigVersion(config.configVersion);
+        setContextCompressionMaskToken(config.maskToken || '******');
+        setContextCompressionLoaded(true);
+        setContextCompressionError(null);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        const parsed = getParsedApiError(error);
+        setContextCompressionLoaded(false);
+        setContextCompressionError(parsed.message || '无法读取上下文压缩配置');
+        console.error('Failed to load context compression setting:', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const updateContextCompressionEnabled = useCallback(
+    async (nextEnabled: boolean) => {
+      if (!contextCompressionLoaded || contextCompressionSaving) {
+        return;
+      }
+
+      const previousEnabled = contextCompressionEnabled;
+      setContextCompressionEnabled(nextEnabled);
+      setContextCompressionSaving(true);
+      setContextCompressionError(null);
+
+      try {
+        const result = await systemConfigApi.update({
+          configVersion: contextCompressionConfigVersion,
+          maskToken: contextCompressionMaskToken,
+          reloadNow: true,
+          items: [
+            {
+              key: CONTEXT_COMPRESSION_CONFIG_KEY,
+              value: nextEnabled ? 'true' : 'false',
+            },
+          ],
+        });
+        setContextCompressionConfigVersion(result.configVersion || contextCompressionConfigVersion);
+      } catch (error) {
+        const parsed = getParsedApiError(error);
+        setContextCompressionEnabled(previousEnabled);
+        setContextCompressionError(parsed.message || '上下文压缩设置保存失败');
+      } finally {
+        setContextCompressionSaving(false);
+      }
+    },
+    [
+      contextCompressionConfigVersion,
+      contextCompressionEnabled,
+      contextCompressionLoaded,
+      contextCompressionMaskToken,
+      contextCompressionSaving,
+    ],
+  );
 
   const availableSkillIds = new Set(skills.map((skill) => skill.id));
   const quickQuestions = QUICK_QUESTIONS.filter((question) => availableSkillIds.size === 0 || availableSkillIds.has(question.skill));
@@ -956,6 +1035,41 @@ const ChatPage: React.FC = () => {
                   variant="info"
                   title="追问上下文加载中"
                   message="正在加载历史分析上下文；现在可直接发送追问。"
+                  className="rounded-xl px-3 py-2 text-xs shadow-none"
+                />
+              ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-surface/25 px-3 py-2">
+                <label
+                  className={cn(
+                    'inline-flex items-center gap-2 text-sm',
+                    contextCompressionLoaded && !contextCompressionSaving
+                      ? 'cursor-pointer text-foreground'
+                      : 'cursor-not-allowed text-muted-text',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={contextCompressionEnabled}
+                    disabled={!contextCompressionLoaded || contextCompressionSaving}
+                    onChange={(event) => void updateContextCompressionEnabled(event.target.checked)}
+                    className="chat-skill-checkbox"
+                  />
+                  <span className="font-medium">上下文压缩</span>
+                  <span className="text-xs text-muted-text">节省长会话 token</span>
+                </label>
+                <span className="text-xs text-muted-text">
+                  {contextCompressionSaving
+                    ? '保存中...'
+                    : contextCompressionEnabled
+                      ? '已启用'
+                      : '未启用'}
+                </span>
+              </div>
+              {contextCompressionError ? (
+                <InlineAlert
+                  variant="danger"
+                  title="上下文压缩设置未保存"
+                  message={contextCompressionError}
                   className="rounded-xl px-3 py-2 text-xs shadow-none"
                 />
               ) : null}
