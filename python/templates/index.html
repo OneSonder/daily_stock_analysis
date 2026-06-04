@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Yahoo Finance Data</title>
+</head>
+<body>
+    <h1>Yahoo Finance Data</h1>
+    <form method="POST">
+        <input type="text" name="ticker" placeholder="Enter Ticker Symbol">
+        <input type="submit" value="Get Data">
+    </form>
+    {% if error_message %}
+        <div style="color: red;">{{ error_message }}</div>
+    {% endif %}
+
+    {% if error_message %}
+        <div style="color: red;">{{ error_message }}</div>
+    {% endif %}
+
+    {% if chart_html %}
+        <div id="chart">{{ chart_html|safe }}</div>
+        <a href="/export"><button>Export to Excel</button></a>
+    {% endif %}
+
+    {% if signals_html %}
+        <h2>Signals (latest 30 days)</h2>
+        <div id="signals">{{ signals_html|safe }}</div>
+    {% endif %}
+</body>
+</html>
