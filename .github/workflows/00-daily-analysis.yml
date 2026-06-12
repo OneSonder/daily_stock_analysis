@@ -11,9 +11,10 @@ on:
       mode:
         description: '运行模式'
         required: true
-        default: 'full'
+        default: 'hsi-only'
         type: choice
         options:
+          - hsi-only      # 仅 HSI 技术筛选合格股（默认）
           - full          # 完整分析（股票+大盘）
           - market-only   # 仅大盘复盘
           - stocks-only   # 仅股票分析
@@ -363,7 +364,7 @@ jobs:
           REPORT_QUALIFIED_SCAN_MAX_RESULTS: ${{ vars.REPORT_QUALIFIED_SCAN_MAX_RESULTS || secrets.REPORT_QUALIFIED_SCAN_MAX_RESULTS || '20' }}
           REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY: ${{ vars.REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY || secrets.REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY || 'false' }}
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
-          MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'true' }}
+          MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'false' }}
           ANALYSIS_DELAY: ${{ vars.ANALYSIS_DELAY || secrets.ANALYSIS_DELAY || '0' }}
           TRADING_DAY_CHECK_ENABLED: ${{ vars.TRADING_DAY_CHECK_ENABLED || secrets.TRADING_DAY_CHECK_ENABLED || 'true' }}
           
@@ -391,7 +392,7 @@ jobs:
           fi
 
           # 判断运行模式
-          MODE="${{ github.event.inputs.mode || 'full' }}"
+          MODE="${{ github.event.inputs.mode || 'hsi-only' }}"
           
           echo "=========================================="
           echo "🚀 A股自选股智能分析系统"
@@ -463,7 +464,7 @@ jobs:
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
             python main.py --market-review $FORCE_RUN_ARG
-          elif [ "$MODE" = "stocks-only" ]; then
+          elif [ "$MODE" = "stocks-only" ] || [ "$MODE" = "hsi-only" ]; then
             python main.py --no-market-review $FORCE_RUN_ARG
           else
             python main.py $FORCE_RUN_ARG
