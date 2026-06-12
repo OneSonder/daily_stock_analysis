@@ -1,0 +1,19 @@
+{% if qualified_scan and qualified_scan.enabled %}
+## {{ labels.qualified_scan_heading }}
+
+{% if qualified_scan.error %}
+{{ labels.qualified_scan_error }}
+{% elif qualified_scan.skipped %}
+{{ qualified_scan.skip_reason or labels.qualified_scan_skipped }}
+{% elif qualified_scan.matches %}
+| {{ labels.qualified_scan_code }} | {{ labels.qualified_scan_name }} | {{ labels.qualified_scan_close }} | {{ labels.qualified_scan_entry20 }} | {{ labels.qualified_scan_entry55 }} | {{ labels.qualified_scan_matched }} |
+|------|------|-------|--------|--------|--------|
+{% for item in qualified_scan.matches %}
+| {{ item.code }} | {{ item.name }} | {{ item.close }} | {{ item.entry20 }} | {{ item.entry55 }} | {{ item.matched_conditions|join(', ') }} |
+{% endfor %}
+{% else %}
+{{ labels.qualified_scan_none }}
+{% endif %}
+
+---
+{% endif %}

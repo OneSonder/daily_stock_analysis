@@ -71,6 +71,33 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("贵州茅台", out)
         self.assertIn("持有", out)
 
+    def test_render_markdown_includes_qualified_scan_section(self) -> None:
+        r = _make_result()
+        out = render(
+            "markdown",
+            [r],
+            summary_only=True,
+            extra_context={
+                "qualified_scan": {
+                    "enabled": True,
+                    "matches": [
+                        {
+                            "code": "0700.HK",
+                            "name": "騰訊控股",
+                            "close": 300,
+                            "entry20": 290,
+                            "entry55": 280,
+                            "matched_conditions": ["close_vs_entry"],
+                        }
+                    ],
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("技术筛选合格股", out)
+        self.assertIn("0700.HK", out)
+        self.assertIn("close_vs_entry", out)
+
     def test_render_markdown_full(self) -> None:
         """Markdown platform renders full report."""
         r = _make_result()

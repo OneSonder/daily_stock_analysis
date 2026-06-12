@@ -17,7 +17,6 @@ HSI_STOCKS = [
     {"code": "0003.HK", "name": "香港中華煤氣"},
     {"code": "0005.HK", "name": "匯豐控股"},
     {"code": "0006.HK", "name": "電能實業"},
-    {"code": "0011.HK", "name": "恒生銀行"},
     {"code": "0012.HK", "name": "恒地"},
     {"code": "0016.HK", "name": "新鴻基地產"},
     {"code": "0027.HK", "name": "銀河娛樂"},
@@ -345,37 +344,41 @@ def get_scan_config_from_env() -> Dict[str, Any]:
     }
 
 
-def scan_hsi(
+def scan_stocks(
+    stocks: List[Dict[str, str]],
     period: str = '1y',
     conditions: str = 'close_vs_entry',
     max_workers: int = 8,
     retries: int = 5,
-    check_trading_day: bool = True,
+    check_trading_day: bool = False,
     use_multi_source: bool = False,
 ) -> Dict[str, Any]:
+    """Scan an arbitrary stock universe with S1/S2 breakout conditions."""
     wanted = parse_conditions(conditions)
-    stocks = HSI_STOCKS
 
-    # Trading day check
-    if check_trading_day:
-        if not is_hk_market_open():
-            return {
-                'matches': [],
-                'no_price': [],
-                'stats': {'tickers': len(stocks), 'max_workers': max_workers, 'total_ms': 0},
-                'skipped': True,
-                'skip_reason': 'HK market closed today',
-            }
+    if check_trading_day and not is_hk_market_open():
+        return {
+            'matches': [],
+            'no_price': [],
+            'stats': {'tickers': len(stocks), 'max_workers': max_workers, 'total_ms': 0},
+            'skipped': True,
+            'skip_reason': 'HK market closed today',
+            'conditions': sorted(wanted),
+        }
 
     started = time.perf_counter()
-
     results: List[Dict[str, Any]] = [None] * len(stocks)
     worker_count = max(1, max_workers)
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_idx = {
             executor.submit(
-                evaluate_ticker_timed, item['code'], item['name'], period, retries, use_multi_source,
+                evaluate_ticker_timed,
+                item.get('code', ''),
+                item.get('name', ''),
+                period,
+                retries,
+                use_multi_source,
             ): idx
             for idx, item in enumerate(stocks)
         }
@@ -384,7 +387,12 @@ def scan_hsi(
             results[idx] = future.result()
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
-    logger.info("scan_hsi tickers=%s max_workers=%s total_ms=%.2f", len(stocks), worker_count, total_ms)
+    logger.info(
+        "scan_stocks tickers=%s max_workers=%s total_ms=%.2f",
+        len(stocks),
+        worker_count,
+        total_ms,
+    )
 
     matches = [
         r for r in results
@@ -401,7 +409,27 @@ def scan_hsi(
             'total_ms': total_ms,
         },
         'skipped': False,
+        'conditions': sorted(wanted),
     }
+
+
+def scan_hsi(
+    period: str = '1y',
+    conditions: str = 'close_vs_entry',
+    max_workers: int = 8,
+    retries: int = 5,
+    check_trading_day: bool = True,
+    use_multi_source: bool = False,
+) -> Dict[str, Any]:
+    return scan_stocks(
+        stocks=HSI_STOCKS,
+        period=period,
+        conditions=conditions,
+        max_workers=max_workers,
+        retries=retries,
+        check_trading_day=check_trading_day,
+        use_multi_source=use_multi_source,
+    )
 
 
 def scan_hsi_and_notify(

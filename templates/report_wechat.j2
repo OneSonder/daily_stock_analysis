@@ -2,6 +2,7 @@
 
 > {{ results|length }} {{ labels.stock_unit }} | 🟢{{ labels.buy_label }}:{{ buy_count }} 🟡{{ labels.watch_label }}:{{ hold_count }} 🔴{{ labels.sell_label }}:{{ sell_count }}
 
+{% include '_qualified_scan.j2' %}
 {% if summary_only %}
 **📊 {{ labels.summary_heading }}**
 {% for e in enriched %}

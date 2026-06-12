@@ -816,6 +816,18 @@ class Config:
     report_integrity_retry: int = 1  # Retry count when mandatory fields missing (0 = placeholder only)
     report_history_compare_n: int = 0  # History comparison count (0 = disabled)
 
+    # Daily report qualified-stock scan (S1/S2 breakout filter)
+    report_qualified_scan_enabled: bool = False
+    report_qualified_scan_stock_list: str = "HSI"
+    report_qualified_scan_period: str = "1y"
+    report_qualified_scan_conditions: str = "close_vs_entry"
+    report_qualified_scan_rule_json: str = ""
+    report_qualified_scan_plugin: str = ""
+    report_qualified_scan_max_workers: int = 8
+    report_qualified_scan_use_multi_source: bool = True
+    report_qualified_scan_max_results: int = 20
+    report_qualified_scan_check_trading_day: bool = False
+
     # PushPlus 推送配置
     pushplus_token: Optional[str] = None  # PushPlus Token
     pushplus_topic: Optional[str] = None  # PushPlus 群组编码（一对多推送）
@@ -1606,6 +1618,37 @@ class Config:
             report_integrity_enabled=os.getenv('REPORT_INTEGRITY_ENABLED', 'true').lower() == 'true',
             report_integrity_retry=parse_env_int(os.getenv('REPORT_INTEGRITY_RETRY'), 1, field_name='REPORT_INTEGRITY_RETRY', minimum=0),
             report_history_compare_n=parse_env_int(os.getenv('REPORT_HISTORY_COMPARE_N'), 0, field_name='REPORT_HISTORY_COMPARE_N', minimum=0),
+            report_qualified_scan_enabled=parse_env_bool(
+                os.getenv('REPORT_QUALIFIED_SCAN_ENABLED'),
+                default=False,
+            ),
+            report_qualified_scan_stock_list=(os.getenv('REPORT_QUALIFIED_SCAN_STOCK_LIST') or 'HSI').strip(),
+            report_qualified_scan_period=(os.getenv('REPORT_QUALIFIED_SCAN_PERIOD') or '1y').strip(),
+            report_qualified_scan_conditions=(
+                os.getenv('REPORT_QUALIFIED_SCAN_CONDITIONS') or 'close_vs_entry'
+            ).strip(),
+            report_qualified_scan_rule_json=(os.getenv('REPORT_QUALIFIED_SCAN_RULE_JSON') or '').strip(),
+            report_qualified_scan_plugin=(os.getenv('REPORT_QUALIFIED_SCAN_PLUGIN') or '').strip(),
+            report_qualified_scan_max_workers=parse_env_int(
+                os.getenv('REPORT_QUALIFIED_SCAN_MAX_WORKERS'),
+                8,
+                field_name='REPORT_QUALIFIED_SCAN_MAX_WORKERS',
+                minimum=1,
+            ),
+            report_qualified_scan_use_multi_source=parse_env_bool(
+                os.getenv('REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE'),
+                default=True,
+            ),
+            report_qualified_scan_max_results=parse_env_int(
+                os.getenv('REPORT_QUALIFIED_SCAN_MAX_RESULTS'),
+                20,
+                field_name='REPORT_QUALIFIED_SCAN_MAX_RESULTS',
+                minimum=0,
+            ),
+            report_qualified_scan_check_trading_day=parse_env_bool(
+                os.getenv('REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY'),
+                default=False,
+            ),
             analysis_delay=parse_env_float(os.getenv('ANALYSIS_DELAY'), 0.0, field_name='ANALYSIS_DELAY', minimum=0.0),
             merge_email_notification=os.getenv('MERGE_EMAIL_NOTIFICATION', 'false').lower() == 'true',
             feishu_max_bytes=parse_env_int(os.getenv('FEISHU_MAX_BYTES'), 20000, field_name='FEISHU_MAX_BYTES', minimum=1),

@@ -177,6 +177,8 @@ def render(
         safe_extra_context.pop("report_language", None)
         context.update(safe_extra_context)
 
+    context.setdefault("qualified_scan", {})
+
     try:
         env = Environment(
             loader=FileSystemLoader(str(templates_dir)),

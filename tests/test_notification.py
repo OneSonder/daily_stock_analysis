@@ -470,6 +470,45 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
 
         self.assertIn("*分析模型: gemini/gemini-2.5-flash*", out)
 
+    @mock.patch("src.notification.NotificationService._get_qualified_scan_context")
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_includes_qualified_scan_section(
+        self,
+        mock_get_config: mock.MagicMock,
+        mock_qualified_context: mock.MagicMock,
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        mock_qualified_context.return_value = {
+            "qualified_scan": {
+                "enabled": True,
+                "matches": [
+                    {
+                        "code": "0700.HK",
+                        "name": "騰訊控股",
+                        "close": 300,
+                        "entry20": 290,
+                        "entry55": 280,
+                        "matched_conditions": ["close_vs_entry"],
+                    }
+                ],
+            }
+        }
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-06-12")
+
+        self.assertIn("技术筛选合格股", out)
+        self.assertIn("0700.HK", out)
+        self.assertIn("close_vs_entry", out)
+
     @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_shows_model_by_default(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False)

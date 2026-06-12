@@ -220,6 +220,7 @@ class NotificationService(
         self._report_summary_only = getattr(config, 'report_summary_only', False)
         self._report_show_llm_model = getattr(config, 'report_show_llm_model', True)
         self._history_compare_cache: Dict[Tuple[int, Tuple[Tuple[str, str], ...]], Dict[str, List[Dict[str, Any]]]] = {}
+        self._qualified_scan_cache: Optional[Dict[str, Any]] = None
 
         # 初始化各渠道
         AstrbotSender.__init__(self, config)
@@ -311,6 +312,43 @@ class NotificationService(
 
         self._history_compare_cache[cache_key] = history_by_code
         return {"history_by_code": history_by_code}
+
+    def _get_qualified_scan_context(self) -> Dict[str, Any]:
+        """Run configured qualified-stock scan once and cache for report rendering."""
+        if self._qualified_scan_cache is not None:
+            return {"qualified_scan": self._qualified_scan_cache}
+
+        if not getattr(self._config, "report_qualified_scan_enabled", False):
+            self._qualified_scan_cache = {"enabled": False}
+            return {"qualified_scan": self._qualified_scan_cache}
+
+        try:
+            from src.services.qualified_stock_scanner import run_qualified_scan
+
+            self._qualified_scan_cache = run_qualified_scan(self._config)
+        except Exception as exc:
+            logger.warning("Qualified stock scan context failed: %s", exc, exc_info=True)
+            self._qualified_scan_cache = {
+                "enabled": True,
+                "error": str(exc),
+                "matches": [],
+            }
+        return {"qualified_scan": self._qualified_scan_cache}
+
+    def _append_qualified_scan_fallback(
+        self,
+        report_lines: List[str],
+        labels: Dict[str, str],
+    ) -> None:
+        from src.services.qualified_stock_scanner import format_qualified_scan_section
+
+        section = format_qualified_scan_section(
+            self._get_qualified_scan_context().get("qualified_scan", {}),
+            labels,
+        )
+        if not section:
+            return
+        report_lines.extend([section.rstrip(), "---", ""])
 
     def generate_aggregate_report(
         self,
@@ -976,6 +1014,7 @@ class NotificationService(
                 summary_only=self._report_summary_only,
                 extra_context={
                     **self._get_history_compare_context(results),
+                    **self._get_qualified_scan_context(),
                     "report_language": report_language,
                 },
             )
@@ -1018,9 +1057,8 @@ class NotificationService(
                 )
             report_lines.extend([
                 "",
-                "---",
-                "",
             ])
+        self._append_qualified_scan_fallback(report_lines, labels)
 
         # 逐个股票的决策仪表盘（Issue #262: summary_only 时跳过详情）
         if not self._report_summary_only:
@@ -1282,7 +1320,10 @@ class NotificationService(
                 results=results,
                 report_date=datetime.now().strftime('%Y-%m-%d'),
                 summary_only=self._report_summary_only,
-                extra_context={"report_language": report_language},
+                extra_context={
+                    **self._get_qualified_scan_context(),
+                    "report_language": report_language,
+                },
             )
             if out:
                 return out
@@ -1304,6 +1345,7 @@ class NotificationService(
             f"🟢{labels['buy_label']}:{buy_count} 🟡{labels['watch_label']}:{hold_count} 🔴{labels['sell_label']}:{sell_count}",
             "",
         ]
+        self._append_qualified_scan_fallback(lines, labels)
         
         # Issue #262: summary_only 时仅输出摘要列表
         if self._report_summary_only:
@@ -1527,7 +1569,10 @@ class NotificationService(
                 results=results,
                 report_date=report_date,
                 summary_only=False,
-                extra_context={"report_language": report_language},
+                extra_context={
+                    **self._get_qualified_scan_context(),
+                    "report_language": report_language,
+                },
             )
             if out:
                 return out
@@ -1544,6 +1589,7 @@ class NotificationService(
             f"> {len(results)} {labels['stock_unit_compact']} | 🟢{buy_count} 🟡{hold_count} 🔴{sell_count}",
             "",
         ]
+        self._append_qualified_scan_fallback(lines, labels)
         for r in sorted_results:
             _, emoji, _ = self._get_signal_level(r)
             name = self._get_display_name(r, report_language)

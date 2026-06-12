@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] 聚合日报支持嵌入可配置的技术筛选合格股区块，复用 S1/S2 扫描逻辑并支持 HSI 股票池、JSON 规则与本地插件扩展。
 - [新功能] 通知网关新增 ntfy 一等渠道，支持通过 `NTFY_URL` / `NTFY_TOKEN` 推送并接入 Web 测试、路由、Actions 与诊断。
 - [新功能] 通知网关新增 Gotify 一等渠道，支持通过 `GOTIFY_URL` / `GOTIFY_TOKEN` 推送 Markdown 文本并接入 Web 测试、路由、Actions 与诊断。
 - [修复] 收紧 ntfy 结构化校验，避免 URL 编码空白 topic 被误判为有效通知端点。

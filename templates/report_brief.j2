@@ -2,6 +2,7 @@
 
 > {{ results|length }} {{ labels.stock_unit_compact }} | 🟢{{ buy_count }} 🟡{{ hold_count }} 🔴{{ sell_count }}
 
+{% include '_qualified_scan.j2' %}
 {% for e in enriched %}
 {% set dash = e.result.dashboard or {} %}
 {% set core = (dash.get('core_conclusion') or {}) if dash else {} %}

@@ -9,7 +9,7 @@
 {{ e.signal_emoji }} **{{ e.stock_name }}({{ e.result.code }})**: {{ e.localized_operation_advice }} | {{ labels.score_label }} {{ e.result.sentiment_score }} | {{ e.localized_trend_prediction }}
 {% endfor %}
 
----
+{% include '_qualified_scan.j2' %}
 {% if not summary_only %}
 {% for e in enriched %}
 {% set result = e.result %}
