@@ -2136,9 +2136,13 @@ class StockAnalysisPipeline:
             stock_codes = self.config.stock_list
         
         if not stock_codes:
-            logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
+            if getattr(self.config, "report_qualified_scan_enabled", False) and not dry_run:
+                logger.info("未配置 STOCK_LIST，跳过个股 AI 分析，仅执行技术筛选合格股扫描")
+                self._save_qualified_scan_report()
+            else:
+                logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
             return []
-        
+
         logger.info(f"===== 开始分析 {len(stock_codes)} 只股票 =====")
         logger.info(f"股票列表: {', '.join(stock_codes)}")
         logger.info(f"并发数: {self.max_workers}, 模式: {'仅获取数据' if dry_run else '完整分析'}")
@@ -2252,11 +2256,16 @@ class StockAnalysisPipeline:
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
         
         # 保存报告到本地文件（无论是否推送通知都保存）
-        if results and not dry_run:
-            self._save_local_report(results, report_type)
+        if not dry_run:
+            if results:
+                self._save_local_report(results, report_type)
+            elif getattr(self.config, "report_qualified_scan_enabled", False):
+                self._save_qualified_scan_report()
 
         # 发送通知（单股推送模式下跳过汇总推送，避免重复）
-        if results and send_notification and not dry_run:
+        if send_notification and not dry_run and (
+            results or getattr(self.config, "report_qualified_scan_enabled", False)
+        ):
             if single_stock_notify:
                 # 单股推送模式：只保存汇总报告，不再重复推送
                 logger.info("单股推送模式：跳过汇总推送，仅保存报告到本地")
@@ -2377,6 +2386,19 @@ class StockAnalysisPipeline:
             logger.info(f"决策仪表盘日报已保存: {filepath}")
         except Exception as e:
             logger.error(f"保存本地报告失败: {e}")
+
+    def _save_qualified_scan_report(self) -> None:
+        """Save standalone qualified-stock scan report when stock analysis has no results."""
+        try:
+            report = self.notifier.generate_qualified_scan_report()
+            date_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filepath = self.notifier.save_report_to_file(
+                report,
+                filename=f"qualified_scan_{date_str}.md",
+            )
+            logger.info("技术筛选合格股报告已保存: %s", filepath)
+        except Exception as e:
+            logger.error("保存技术筛选合格股报告失败: %s", e)
 
     def _send_notifications(
         self,

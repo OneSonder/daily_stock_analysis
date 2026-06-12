@@ -817,14 +817,14 @@ class Config:
     report_history_compare_n: int = 0  # History comparison count (0 = disabled)
 
     # Daily report qualified-stock scan (S1/S2 breakout filter)
-    report_qualified_scan_enabled: bool = False
+    report_qualified_scan_enabled: bool = True
     report_qualified_scan_stock_list: str = "HSI"
     report_qualified_scan_period: str = "1y"
     report_qualified_scan_conditions: str = "close_vs_entry"
     report_qualified_scan_rule_json: str = ""
     report_qualified_scan_plugin: str = ""
     report_qualified_scan_max_workers: int = 8
-    report_qualified_scan_use_multi_source: bool = True
+    report_qualified_scan_use_multi_source: bool = False
     report_qualified_scan_max_results: int = 20
     report_qualified_scan_check_trading_day: bool = False
 
@@ -1124,10 +1124,6 @@ class Config:
             for c in stock_list_str.split(',')
             if (c or "").strip()
         ]
-        
-        # 如果没有配置，使用默认的示例股票
-        if not stock_list:
-            stock_list = ['600519', '000001', '300750']
         
         # === LiteLLM multi-key parsing ===
         # GEMINI_API_KEYS (comma-separated) > GEMINI_API_KEY (single)
@@ -1620,7 +1616,7 @@ class Config:
             report_history_compare_n=parse_env_int(os.getenv('REPORT_HISTORY_COMPARE_N'), 0, field_name='REPORT_HISTORY_COMPARE_N', minimum=0),
             report_qualified_scan_enabled=parse_env_bool(
                 os.getenv('REPORT_QUALIFIED_SCAN_ENABLED'),
-                default=False,
+                default=True,
             ),
             report_qualified_scan_stock_list=(os.getenv('REPORT_QUALIFIED_SCAN_STOCK_LIST') or 'HSI').strip(),
             report_qualified_scan_period=(os.getenv('REPORT_QUALIFIED_SCAN_PERIOD') or '1y').strip(),
@@ -1637,7 +1633,7 @@ class Config:
             ),
             report_qualified_scan_use_multi_source=parse_env_bool(
                 os.getenv('REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE'),
-                default=True,
+                default=False,
             ),
             report_qualified_scan_max_results=parse_env_int(
                 os.getenv('REPORT_QUALIFIED_SCAN_MAX_RESULTS'),

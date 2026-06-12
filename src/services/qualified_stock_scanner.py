@@ -237,13 +237,21 @@ def run_qualified_scan(config: Any) -> Dict[str, Any]:
     rule_json_raw = getattr(config, "report_qualified_scan_rule_json", "") or ""
     plugin_path = getattr(config, "report_qualified_scan_plugin", "") or ""
     max_workers = int(getattr(config, "report_qualified_scan_max_workers", 8) or 8)
-    use_multi_source = bool(getattr(config, "report_qualified_scan_use_multi_source", True))
+    use_multi_source = bool(getattr(config, "report_qualified_scan_use_multi_source", False))
     max_results = int(getattr(config, "report_qualified_scan_max_results", 20) or 20)
     check_trading_day = bool(getattr(config, "report_qualified_scan_check_trading_day", False))
 
     try:
         wanted = parse_conditions(conditions)
         stocks, universe_label = resolve_universe(stock_list)
+        data_source = "multi-source" if use_multi_source else "yfinance"
+        logger.info(
+            "Qualified scan starting: universe=%s tickers=%s conditions=%s source=%s",
+            universe_label,
+            len(stocks),
+            conditions,
+            data_source,
+        )
         payload = scan_stocks(
             stocks=stocks,
             period=period,
@@ -277,6 +285,15 @@ def run_qualified_scan(config: Any) -> Dict[str, Any]:
 
         if max_results > 0:
             matches = matches[:max_results]
+
+        stats = payload.get("stats", {})
+        logger.info(
+            "Qualified scan complete: matches=%s tickers=%s total_ms=%s source=%s",
+            len(matches),
+            stats.get("tickers", len(stocks)),
+            stats.get("total_ms"),
+            data_source,
+        )
 
         return {
             "enabled": True,

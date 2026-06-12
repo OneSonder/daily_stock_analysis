@@ -350,6 +350,40 @@ class NotificationService(
             return
         report_lines.extend([section.rstrip(), "---", ""])
 
+    def generate_qualified_scan_report(self, report_date: Optional[str] = None) -> str:
+        """Generate a standalone qualified-stock scan report."""
+        if report_date is None:
+            report_date = datetime.now().strftime('%Y-%m-%d')
+        report_language = self._get_report_language()
+        labels = get_report_labels(report_language)
+        payload = self._get_qualified_scan_context().get("qualified_scan", {})
+        section = ""
+        if payload.get("enabled"):
+            from src.services.qualified_stock_scanner import format_qualified_scan_section
+
+            section = format_qualified_scan_section(payload, labels).strip()
+        lines = [
+            f"# 🎯 {report_date} {labels['qualified_scan_heading']}",
+            "",
+        ]
+        if section:
+            lines.append(section)
+        else:
+            lines.append(labels.get("qualified_scan_none", "No qualified stocks"))
+        lines.extend([
+            "",
+            f"*{labels['generated_at_label']}：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        ])
+        return "\n".join(lines)
+
+    def _should_render_with_templates(self, results: List[AnalysisResult]) -> bool:
+        config = get_config()
+        if not getattr(config, "report_renderer_enabled", False):
+            return False
+        if results:
+            return True
+        return bool(getattr(config, "report_qualified_scan_enabled", False))
+
     def generate_aggregate_report(
         self,
         results: List[AnalysisResult],
@@ -1005,7 +1039,7 @@ class NotificationService(
         ma_label = "Moving Averages" if report_language == "en" else "均线"
         volume_analysis_label = "Volume" if report_language == "en" else "量能"
         news_heading = "News Flow" if report_language == "en" else "消息面"
-        if getattr(config, 'report_renderer_enabled', False) and results:
+        if self._should_render_with_templates(results):
             from src.services.report_renderer import render
             out = render(
                 platform='markdown',
@@ -1023,6 +1057,9 @@ class NotificationService(
 
         if report_date is None:
             report_date = datetime.now().strftime('%Y-%m-%d')
+
+        if not results and getattr(config, "report_qualified_scan_enabled", False):
+            return self.generate_qualified_scan_report(report_date=report_date)
 
         # 按评分排序（高分在前）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
@@ -1313,7 +1350,7 @@ class NotificationService(
         config = get_config()
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
-        if getattr(config, 'report_renderer_enabled', False) and results:
+        if self._should_render_with_templates(results):
             from src.services.report_renderer import render
             out = render(
                 platform='wechat',
@@ -1329,6 +1366,9 @@ class NotificationService(
                 return out
 
         report_date = datetime.now().strftime('%Y-%m-%d')
+
+        if not results and getattr(config, "report_qualified_scan_enabled", False):
+            return self.generate_qualified_scan_report(report_date=report_date)
         
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
@@ -1562,7 +1602,7 @@ class NotificationService(
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
         config = get_config()
-        if getattr(config, 'report_renderer_enabled', False) and results:
+        if self._should_render_with_templates(results):
             from src.services.report_renderer import render
             out = render(
                 platform='brief',
@@ -1578,6 +1618,8 @@ class NotificationService(
                 return out
         # Fallback: brief summary from dashboard report
         if not results:
+            if getattr(config, "report_qualified_scan_enabled", False):
+                return self.generate_qualified_scan_report(report_date=report_date)
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')

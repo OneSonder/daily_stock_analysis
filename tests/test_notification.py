@@ -472,6 +472,39 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
 
     @mock.patch("src.notification.NotificationService._get_qualified_scan_context")
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_with_no_results_returns_qualified_scan(
+        self,
+        mock_get_config: mock.MagicMock,
+        mock_qualified_context: mock.MagicMock,
+    ):
+        mock_get_config.return_value = _make_config(
+            report_renderer_enabled=False,
+            report_qualified_scan_enabled=True,
+        )
+        mock_qualified_context.return_value = {
+            "qualified_scan": {
+                "enabled": True,
+                "matches": [
+                    {
+                        "code": "0700.HK",
+                        "name": "騰訊控股",
+                        "close": 300,
+                        "entry20": 290,
+                        "entry55": 280,
+                        "matched_conditions": ["close_vs_entry"],
+                    }
+                ],
+            }
+        }
+        service = NotificationService()
+
+        out = service.generate_dashboard_report([], report_date="2026-06-12")
+
+        self.assertIn("技术筛选合格股", out)
+        self.assertIn("0700.HK", out)
+
+    @mock.patch("src.notification.NotificationService._get_qualified_scan_context")
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_includes_qualified_scan_section(
         self,
         mock_get_config: mock.MagicMock,

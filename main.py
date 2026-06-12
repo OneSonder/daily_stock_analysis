@@ -424,6 +424,8 @@ def _compute_trading_day_filter(
         effective_region = None
 
     should_skip_all = (not filtered_codes) and (effective_region or '') == ''
+    if not filtered_codes and getattr(config, "report_qualified_scan_enabled", False):
+        should_skip_all = False
     return (filtered_codes, effective_region, should_skip_all)
 
 
