@@ -819,11 +819,11 @@ class Config:
     # Daily report qualified-stock scan (S1/S2 breakout filter)
     report_qualified_scan_enabled: bool = True
     report_qualified_scan_stock_list: str = "HSI"
-    report_qualified_scan_period: str = "1y"
-    report_qualified_scan_conditions: str = "close_vs_entry"
+    report_qualified_scan_period: str = "6mo"
+    report_qualified_scan_conditions: str = "s1_breakout,s2_breakout"
     report_qualified_scan_rule_json: str = ""
     report_qualified_scan_plugin: str = ""
-    report_qualified_scan_max_workers: int = 8
+    report_qualified_scan_max_workers: int = 4
     report_qualified_scan_use_multi_source: bool = False
     report_qualified_scan_max_results: int = 20
     report_qualified_scan_check_trading_day: bool = False
@@ -1619,15 +1619,15 @@ class Config:
                 default=True,
             ),
             report_qualified_scan_stock_list=(os.getenv('REPORT_QUALIFIED_SCAN_STOCK_LIST') or 'HSI').strip(),
-            report_qualified_scan_period=(os.getenv('REPORT_QUALIFIED_SCAN_PERIOD') or '1y').strip(),
+            report_qualified_scan_period=(os.getenv('REPORT_QUALIFIED_SCAN_PERIOD') or '6mo').strip(),
             report_qualified_scan_conditions=(
-                os.getenv('REPORT_QUALIFIED_SCAN_CONDITIONS') or 'close_vs_entry'
+                os.getenv('REPORT_QUALIFIED_SCAN_CONDITIONS') or 's1_breakout,s2_breakout'
             ).strip(),
             report_qualified_scan_rule_json=(os.getenv('REPORT_QUALIFIED_SCAN_RULE_JSON') or '').strip(),
             report_qualified_scan_plugin=(os.getenv('REPORT_QUALIFIED_SCAN_PLUGIN') or '').strip(),
             report_qualified_scan_max_workers=parse_env_int(
                 os.getenv('REPORT_QUALIFIED_SCAN_MAX_WORKERS'),
-                8,
+                4,
                 field_name='REPORT_QUALIFIED_SCAN_MAX_WORKERS',
                 minimum=1,
             ),

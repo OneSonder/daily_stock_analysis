@@ -2133,14 +2133,14 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "is_sensitive": False,
         "is_required": False,
         "is_editable": True,
-        "default_value": "close_vs_entry",
+        "default_value": "s1_breakout,s2_breakout",
         "options": [],
         "validation": {},
         "display_order": 63,
         "help_key": "settings.report.REPORT_QUALIFIED_SCAN_CONDITIONS",
         "examples": [
-            "REPORT_QUALIFIED_SCAN_CONDITIONS=close_vs_entry",
             "REPORT_QUALIFIED_SCAN_CONDITIONS=s1_breakout,s2_breakout",
+            "REPORT_QUALIFIED_SCAN_CONDITIONS=close_vs_entry",
         ],
         "docs": [
             {

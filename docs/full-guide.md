@@ -124,11 +124,11 @@ daily_stock_analysis/
 | `REPORT_HISTORY_COMPARE_N` | 历史信号对比条数，`0` 关闭（默认），`>0` 启用 | 可选 |
 | `REPORT_QUALIFIED_SCAN_ENABLED` | 是否在聚合日报中嵌入技术筛选合格股区块（默认 `true`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 筛选股票池：`HSI`、逗号分隔代码，或 JSON 列表路径 | 可选 |
-| `REPORT_QUALIFIED_SCAN_PERIOD` | 筛选历史窗口，如 `1y` | 可选 |
-| `REPORT_QUALIFIED_SCAN_CONDITIONS` | 内置条件：`close_vs_entry`、`s1_breakout`、`s2_breakout` 等 | 可选 |
+| `REPORT_QUALIFIED_SCAN_PERIOD` | 筛选历史窗口（默认 `6mo`） | 可选 |
+| `REPORT_QUALIFIED_SCAN_CONDITIONS` | 内置条件（默认 `s1_breakout,s2_breakout`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_RULE_JSON` | 可选 JSON 规则，在基础条件后继续过滤 | 可选 |
 | `REPORT_QUALIFIED_SCAN_PLUGIN` | 可选本地 Python 插件路径，完全自定义过滤逻辑 | 可选 |
-| `REPORT_QUALIFIED_SCAN_MAX_WORKERS` | 筛选并发数（默认 `8`） | 可选 |
+| `REPORT_QUALIFIED_SCAN_MAX_WORKERS` | 筛选并发数（默认 `4`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | 是否优先使用多数据源抓取；默认 `false`，与小程序一致走 yfinance | 可选 |
 | `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | 报告中最多展示多少只合格股（默认 `20`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | 是否仅在港股交易日执行筛选（默认 `false`） | 可选 |

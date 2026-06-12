@@ -232,11 +232,11 @@ def run_qualified_scan(config: Any) -> Dict[str, Any]:
         return {"enabled": False}
 
     stock_list = getattr(config, "report_qualified_scan_stock_list", HSI_LIST_TOKEN)
-    period = getattr(config, "report_qualified_scan_period", "1y")
-    conditions = getattr(config, "report_qualified_scan_conditions", "close_vs_entry")
+    period = getattr(config, "report_qualified_scan_period", "6mo")
+    conditions = getattr(config, "report_qualified_scan_conditions", "s1_breakout,s2_breakout")
     rule_json_raw = getattr(config, "report_qualified_scan_rule_json", "") or ""
     plugin_path = getattr(config, "report_qualified_scan_plugin", "") or ""
-    max_workers = int(getattr(config, "report_qualified_scan_max_workers", 8) or 8)
+    max_workers = int(getattr(config, "report_qualified_scan_max_workers", 4) or 4)
     use_multi_source = bool(getattr(config, "report_qualified_scan_use_multi_source", False))
     max_results = int(getattr(config, "report_qualified_scan_max_results", 20) or 20)
     check_trading_day = bool(getattr(config, "report_qualified_scan_check_trading_day", False))
