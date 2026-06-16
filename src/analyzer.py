@@ -1516,6 +1516,60 @@ class AnalysisResult:
         }
         return star_map.get(str(self.confidence_level or "").strip().lower(), "⭐⭐")
 
+SENIOR_INVESTOR_ANALYST_POLICY_ZH = """## 资深投资研究员政策（Senior Investor Analyst Policy）
+
+- Act as a senior investor with 50 years of experience while staying current-market aware.
+- Follow credible sources only. Prioritize structured data and news context in this prompt, then official filings/disclosures and reputable financial media when source text is explicitly supplied.
+- Keep conclusions auditable: distinguish Fact / Estimate / Assumption and never fabricate unavailable data.
+
+### Required Coverage（请映射到现有 JSON 字段）
+1. Executive Summary（执行摘要）
+2. Financial Performance & Health（财务表现与健康度）
+3. Valuation（估值）
+4. Business Model & Moat（商业模式与护城河）
+5. Growth Strategy（增长策略）
+6. Management & Governance（管理层与治理）
+7. Risk Analysis（风险分析）
+8. Final Recommendation（最终建议）
+
+### Chain of Verification & Evidence Trail
+- Include a visible "Chain of Verification" section for major conclusions.
+- For each major conclusion, state the supporting evidence from supplied context/news.
+- If evidence is missing or stale, explicitly write "data unavailable" / “数据不可用”，禁止猜测补齐。
+- Provide concise reasoning bullets only. Do not reveal hidden chain-of-thought.
+
+### Valuation and peer comparison minimums
+- Discuss valuation multiples (P/E, P/B, EV/EBITDA, PEG when available) and competitor comparison when context allows.
+- If peers, earnings-call notes, or industry averages are unavailable, state uncertainty and do not invent competitor names.
+"""
+
+SENIOR_INVESTOR_ANALYST_POLICY_EN = """## Senior Investor Analyst Policy
+
+- Act as a senior investor with 50 years of experience while staying current-market aware.
+- Use credible sources only. Prioritize structured data and supplied news context in this prompt, then official filings/disclosures and reputable financial media when source text is available.
+- Keep every conclusion auditable by distinguishing Fact / Estimate / Assumption. Never fabricate unavailable data.
+
+### Required Coverage (map into existing JSON fields)
+1. Executive Summary
+2. Financial Performance & Health
+3. Valuation
+4. Business Model & Moat
+5. Growth Strategy
+6. Management & Governance
+7. Risk Analysis
+8. Final Recommendation
+
+### Chain of Verification & Evidence Trail
+- Include a visible "Chain of Verification" section for major conclusions.
+- For each major conclusion, cite the supporting evidence from supplied context/news.
+- If evidence is missing or stale, explicitly state "data unavailable" rather than guessing.
+- Provide concise reasoning bullets only. Do not reveal hidden chain-of-thought.
+
+### Valuation and peer comparison minimums
+- Discuss valuation multiples (P/E, P/B, EV/EBITDA, PEG when available) and competitor comparison when context allows.
+- If peers, earnings-call notes, or industry averages are unavailable, state uncertainty and avoid invented competitor names.
+"""
+
 
 class GeminiAnalyzer:
     """
@@ -1541,6 +1595,8 @@ class GeminiAnalyzer:
     LEGACY_DEFAULT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{market_placeholder}投资分析师，负责生成专业的【决策仪表盘】分析报告。
 
 {guidelines_placeholder}
+
+{senior_investor_policy_section}
 
 """ + CORE_TRADING_SKILL_POLICY_ZH + """
 
@@ -1701,6 +1757,7 @@ class GeminiAnalyzer:
 
 {default_skill_policy_section}
 {skills_section}
+{senior_investor_policy_section}
 
 ## 输出格式：决策仪表盘 JSON
 
@@ -1927,17 +1984,28 @@ class GeminiAnalyzer:
             ),
         )
 
+    @staticmethod
+    def _get_senior_investor_policy(report_language: str) -> str:
+        """Return language-aware senior investor policy block."""
+        lang = normalize_report_language(report_language)
+        if lang == "en":
+            return SENIOR_INVESTOR_ANALYST_POLICY_EN
+        return SENIOR_INVESTOR_ANALYST_POLICY_ZH
+
     def _get_analysis_system_prompt(self, report_language: str, stock_code: str = "") -> str:
         """Build the analyzer system prompt with output-language guidance."""
         lang = normalize_report_language(report_language)
         market_role = get_market_role(stock_code, lang)
         market_guidelines = get_market_guidelines(stock_code, lang)
+        senior_investor_policy_section = self._get_senior_investor_policy(lang)
         skill_instructions, default_skill_policy, use_legacy_default_prompt = self._get_skill_prompt_sections()
         if use_legacy_default_prompt:
             base_prompt = self.LEGACY_DEFAULT_SYSTEM_PROMPT.replace(
                 "{market_placeholder}", market_role
             ).replace(
                 "{guidelines_placeholder}", market_guidelines
+            ).replace(
+                "{senior_investor_policy_section}", senior_investor_policy_section
             )
         else:
             skills_section = ""
@@ -1951,6 +2019,7 @@ class GeminiAnalyzer:
                 .replace("{guidelines_placeholder}", market_guidelines)
                 .replace("{default_skill_policy_section}", default_skill_policy_section)
                 .replace("{skills_section}", skills_section)
+                .replace("{senior_investor_policy_section}", senior_investor_policy_section)
             )
         if lang == "en":
             return base_prompt + """
@@ -3083,6 +3152,26 @@ class GeminiAnalyzer:
 ### ⚠️ 重要：输出正确的股票名称格式
 正确的股票名称格式为“股票名称（股票代码）”，例如“贵州茅台（600519）”。
 如果上方显示的股票名称为"股票{code}"或不正确，请在分析开头**明确输出该股票的正确中文全称**。
+"""
+        if report_language == "en":
+            prompt += """
+
+### Data reliability and anti-hallucination guardrails (must follow)
+- Use only the structured context and supplied news text in this prompt as trusted evidence.
+- Use credible sources only when source-backed text is available in the supplied context/news.
+- Never invent 5-year financials, valuation history, competitor names, earnings-call notes, or industry averages.
+- If key data is missing, stale, or not supplied, explicitly say "data unavailable" and keep conclusions bounded.
+- Separate Fact / Estimate / Assumption in your narrative.
+"""
+        else:
+            prompt += """
+
+### 数据可靠性与反幻觉约束（必须遵守）
+- 仅将本提示词中提供的结构化上下文与新闻文本作为可信证据来源。
+- 仅在提供了可追溯来源文本时引用外部信息，坚持 credible sources only。
+- 严禁编造 5 年财务、估值历史、竞争对手名称、业绩会纪要或行业均值。
+- 若关键数据缺失、过期或未提供，必须明确写“数据不可用（data unavailable）”，并给出有边界的结论。
+- 在叙述中明确区分 Fact / Estimate / Assumption。
 """
         if use_legacy_default_prompt:
             prompt += f"""

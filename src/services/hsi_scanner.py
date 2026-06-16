@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,13 @@ HSI_STOCKS = [
     {"code": "9999.HK", "name": "網易-S"},
 ]
 
-VALID_CONDITIONS = {'close_vs_entry', 'close_vs_s2_entry', 's1_breakout', 's2_breakout', 's1_exit', 's2_exit'}
+VALID_CONDITIONS = {
+    'close_vs_entry', 'close_vs_s2_entry', 's1_breakout', 's2_breakout', 's1_exit', 's2_exit',
+    'w_bottom', 'm_top', 'double_bottom', 'double_top', 'head_shoulders', 'inverse_head_shoulders',
+    'triangle_breakout', 'bull_flag', 'bear_flag', 'gap_up', 'gap_down',
+    'bullish_engulfing', 'bearish_engulfing', 'doji', 'hammer', 'shooting_star',
+    'kline_bullish', 'kline_bearish',
+}
 
 YAHOO_URL_TEMPLATE = "https://finance.yahoo.com/quote/{code}?p={code}"
 
@@ -140,7 +147,7 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename lowercase columns to uppercase for signal computation."""
     rename_map = {}
     for col in df.columns:
-        if col.lower() in ('high', 'low', 'close') and col.islower():
+        if col.lower() in ('open', 'high', 'low', 'close') and col.islower():
             rename_map[col] = col.title()
         elif col.lower() == 'volume':
             rename_map[col] = col.title() if col.islower() else col
@@ -151,6 +158,265 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         missing = needed - set(df.columns)
         raise ValueError(f"Missing required columns after normalization: {missing}")
     return df
+
+
+def _swing_points(series: pd.Series, span: int = 3) -> Tuple[List[int], List[int]]:
+    highs: List[int] = []
+    lows: List[int] = []
+    values = series.reset_index(drop=True)
+    if len(values) < (span * 2) + 1:
+        return highs, lows
+    for idx in range(span, len(values) - span):
+        center = values.iloc[idx]
+        if pd.isna(center):
+            continue
+        window = values.iloc[idx - span:idx + span + 1]
+        if center == window.max() and int((window == center).sum()) == 1:
+            highs.append(idx)
+        if center == window.min() and int((window == center).sum()) == 1:
+            lows.append(idx)
+    return highs, lows
+
+
+def _detect_w_bottom(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    _, low_points = _swing_points(low, span=3)
+    if len(low_points) < 2:
+        return False
+    left_idx, right_idx = low_points[-2], low_points[-1]
+    if right_idx - left_idx < 4:
+        return False
+    left_low = float(low.iloc[left_idx])
+    right_low = float(low.iloc[right_idx])
+    avg_low = (left_low + right_low) / 2.0
+    if avg_low <= 0:
+        return False
+    similar_bottoms = abs(left_low - right_low) / avg_low <= 0.06
+    neckline = float(high.iloc[left_idx:right_idx + 1].max())
+    close_now = float(close.iloc[-1])
+    breakout = close_now >= neckline * 0.99
+    recent = (len(close) - 1 - right_idx) <= 20
+    return bool(similar_bottoms and breakout and recent)
+
+
+def _detect_m_top(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    high_points, _ = _swing_points(high, span=3)
+    if len(high_points) < 2:
+        return False
+    left_idx, right_idx = high_points[-2], high_points[-1]
+    if right_idx - left_idx < 4:
+        return False
+    left_high = float(high.iloc[left_idx])
+    right_high = float(high.iloc[right_idx])
+    avg_high = (left_high + right_high) / 2.0
+    if avg_high <= 0:
+        return False
+    similar_tops = abs(left_high - right_high) / avg_high <= 0.06
+    neckline = float(low.iloc[left_idx:right_idx + 1].min())
+    close_now = float(close.iloc[-1])
+    breakdown = close_now <= neckline * 1.01
+    recent = (len(close) - 1 - right_idx) <= 20
+    return bool(similar_tops and breakdown and recent)
+
+
+def _detect_head_shoulders(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    high_points, _ = _swing_points(high, span=3)
+    if len(high_points) < 3:
+        return False
+    left_idx, head_idx, right_idx = high_points[-3:]
+    if not (left_idx < head_idx < right_idx):
+        return False
+    left_high = float(high.iloc[left_idx])
+    head_high = float(high.iloc[head_idx])
+    right_high = float(high.iloc[right_idx])
+    shoulders_similar = abs(left_high - right_high) / max(left_high, right_high, 1e-9) <= 0.08
+    head_clear = head_high > max(left_high, right_high) * 1.03
+    neckline_left = float(low.iloc[left_idx:head_idx + 1].min())
+    neckline_right = float(low.iloc[head_idx:right_idx + 1].min())
+    neckline = (neckline_left + neckline_right) / 2.0
+    close_now = float(close.iloc[-1])
+    breakdown = close_now <= neckline * 1.01
+    recent = (len(close) - 1 - right_idx) <= 25
+    return bool(shoulders_similar and head_clear and breakdown and recent)
+
+
+def _detect_inverse_head_shoulders(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    _, low_points = _swing_points(low, span=3)
+    if len(low_points) < 3:
+        return False
+    left_idx, head_idx, right_idx = low_points[-3:]
+    if not (left_idx < head_idx < right_idx):
+        return False
+    left_low = float(low.iloc[left_idx])
+    head_low = float(low.iloc[head_idx])
+    right_low = float(low.iloc[right_idx])
+    shoulders_similar = abs(left_low - right_low) / max(left_low, right_low, 1e-9) <= 0.08
+    head_clear = head_low < min(left_low, right_low) * 0.97
+    neckline_left = float(high.iloc[left_idx:head_idx + 1].max())
+    neckline_right = float(high.iloc[head_idx:right_idx + 1].max())
+    neckline = (neckline_left + neckline_right) / 2.0
+    close_now = float(close.iloc[-1])
+    breakout = close_now >= neckline * 0.99
+    recent = (len(close) - 1 - right_idx) <= 25
+    return bool(shoulders_similar and head_clear and breakout and recent)
+
+
+def _detect_triangle_breakout(high: pd.Series, low: pd.Series, close: pd.Series) -> Tuple[bool, Optional[str]]:
+    if len(close) < 32:
+        return False, None
+    high_recent = high.iloc[-30:].reset_index(drop=True)
+    low_recent = low.iloc[-30:].reset_index(drop=True)
+    close_recent = close.iloc[-30:].reset_index(drop=True)
+    x = np.arange(len(high_recent), dtype=float)
+    high_slope = float(np.polyfit(x, high_recent.values, 1)[0])
+    low_slope = float(np.polyfit(x, low_recent.values, 1)[0])
+    start_range = float(high_recent.iloc[0] - low_recent.iloc[0])
+    end_range = float(high_recent.iloc[-1] - low_recent.iloc[-1])
+    compressed = start_range > 0 and end_range < start_range * 0.8
+    converging = high_slope < 0 and low_slope > 0
+    if not (compressed and converging):
+        return False, None
+    upper_bound = float(high_recent.iloc[:-1].max())
+    lower_bound = float(low_recent.iloc[:-1].min())
+    close_now = float(close_recent.iloc[-1])
+    if close_now > upper_bound * 1.002:
+        return True, "up"
+    if close_now < lower_bound * 0.998:
+        return True, "down"
+    return False, None
+
+
+def _detect_bull_flag(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    if len(close) < 36:
+        return False
+    impulse_start = float(close.iloc[-35])
+    impulse_peak = float(close.iloc[-15])
+    if impulse_start <= 0:
+        return False
+    impulse_gain = (impulse_peak - impulse_start) / impulse_start
+    pullback_start = float(close.iloc[-15])
+    pullback_end = float(close.iloc[-1])
+    pullback_return = (pullback_end - pullback_start) / max(pullback_start, 1e-9)
+    channel_range = (float(high.iloc[-15:].max()) - float(low.iloc[-15:].min())) / max(pullback_end, 1e-9)
+    breakout = float(close.iloc[-1]) > float(high.iloc[-15:-1].max()) * 1.001
+    return bool(impulse_gain >= 0.08 and pullback_return > -0.08 and channel_range < 0.12 and breakout)
+
+
+def _detect_bear_flag(high: pd.Series, low: pd.Series, close: pd.Series) -> bool:
+    if len(close) < 36:
+        return False
+    impulse_start = float(close.iloc[-35])
+    impulse_trough = float(close.iloc[-15])
+    if impulse_start <= 0:
+        return False
+    impulse_drop = (impulse_trough - impulse_start) / impulse_start
+    pullback_start = float(close.iloc[-15])
+    pullback_end = float(close.iloc[-1])
+    pullback_return = (pullback_end - pullback_start) / max(pullback_start, 1e-9)
+    channel_range = (float(high.iloc[-15:].max()) - float(low.iloc[-15:].min())) / max(pullback_end, 1e-9)
+    breakdown = float(close.iloc[-1]) < float(low.iloc[-15:-1].min()) * 0.999
+    return bool(impulse_drop <= -0.08 and pullback_return < 0.08 and channel_range < 0.12 and breakdown)
+
+
+def _detect_candlestick_patterns(work: pd.DataFrame) -> Dict[str, bool]:
+    if len(work) < 2:
+        return {
+            'gap_up': False,
+            'gap_down': False,
+            'bullish_engulfing': False,
+            'bearish_engulfing': False,
+            'doji': False,
+            'hammer': False,
+            'shooting_star': False,
+        }
+    open_now = float(work['Open'].iloc[-1])
+    close_now = float(work['Close'].iloc[-1])
+    high_now = float(work['High'].iloc[-1])
+    low_now = float(work['Low'].iloc[-1])
+    open_prev = float(work['Open'].iloc[-2])
+    close_prev = float(work['Close'].iloc[-2])
+    high_prev = float(work['High'].iloc[-2])
+    low_prev = float(work['Low'].iloc[-2])
+
+    gap_up = low_now > high_prev * 1.002
+    gap_down = high_now < low_prev * 0.998
+
+    prev_body_low = min(open_prev, close_prev)
+    prev_body_high = max(open_prev, close_prev)
+    curr_body_low = min(open_now, close_now)
+    curr_body_high = max(open_now, close_now)
+    bullish_engulfing = (
+        close_prev < open_prev and
+        close_now > open_now and
+        curr_body_low <= prev_body_low and
+        curr_body_high >= prev_body_high
+    )
+    bearish_engulfing = (
+        close_prev > open_prev and
+        close_now < open_now and
+        curr_body_low <= prev_body_low and
+        curr_body_high >= prev_body_high
+    )
+
+    candle_range = max(high_now - low_now, 1e-9)
+    body_size = abs(close_now - open_now)
+    upper_wick = high_now - max(open_now, close_now)
+    lower_wick = min(open_now, close_now) - low_now
+    doji = body_size <= candle_range * 0.1
+    hammer = lower_wick >= body_size * 2.0 and upper_wick <= body_size * 1.2 and close_now >= open_now * 0.98
+    shooting_star = upper_wick >= body_size * 2.0 and lower_wick <= body_size * 1.2 and close_now <= open_now * 1.02
+
+    return {
+        'gap_up': bool(gap_up),
+        'gap_down': bool(gap_down),
+        'bullish_engulfing': bool(bullish_engulfing),
+        'bearish_engulfing': bool(bearish_engulfing),
+        'doji': bool(doji),
+        'hammer': bool(hammer),
+        'shooting_star': bool(shooting_star),
+    }
+
+
+def _kline_pattern_summary(flags: Dict[str, bool], triangle_direction: Optional[str]) -> Tuple[List[str], List[str], List[str], float]:
+    bullish_weights = {
+        'w_bottom': 4.0,
+        'double_bottom': 3.0,
+        'inverse_head_shoulders': 5.0,
+        'bull_flag': 3.0,
+        'gap_up': 2.0,
+        'bullish_engulfing': 2.0,
+        'hammer': 2.0,
+    }
+    bearish_weights = {
+        'm_top': -4.0,
+        'double_top': -3.0,
+        'head_shoulders': -5.0,
+        'bear_flag': -3.0,
+        'gap_down': -2.0,
+        'bearish_engulfing': -2.0,
+        'shooting_star': -2.0,
+    }
+    bullish_patterns = [name for name in bullish_weights if flags.get(name)]
+    bearish_patterns = [name for name in bearish_weights if flags.get(name)]
+    neutral_patterns: List[str] = []
+    if flags.get('doji'):
+        neutral_patterns.append('doji')
+    if flags.get('triangle_breakout'):
+        if triangle_direction == 'up':
+            bullish_patterns.append('triangle_breakout')
+        elif triangle_direction == 'down':
+            bearish_patterns.append('triangle_breakout')
+        else:
+            neutral_patterns.append('triangle_breakout')
+
+    pattern_score = sum(bullish_weights.get(name, 0.0) for name in bullish_patterns)
+    pattern_score += sum(bearish_weights.get(name, 0.0) for name in bearish_patterns)
+    pattern_score = max(-20.0, min(20.0, pattern_score))
+
+    all_patterns: List[str] = []
+    for name in bullish_patterns + bearish_patterns + neutral_patterns:
+        if name not in all_patterns:
+            all_patterns.append(name)
+    return all_patterns, bullish_patterns, bearish_patterns, pattern_score
 
 
 def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
@@ -165,7 +431,10 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     except Exception:
         pass
 
-    work = df[['High', 'Low', 'Close']].copy()
+    work = df.copy()
+    if 'Open' not in work.columns:
+        work['Open'] = work['Close'].shift(1).fillna(work['Close'])
+    work = work[['Open', 'High', 'Low', 'Close']].copy()
 
     entry20 = work['High'].rolling(window=20).max()
     entry55 = work['High'].rolling(window=55).max()
@@ -181,6 +450,59 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     s2_exit = bool(work['Low'].iloc[-1] < exit20.shift(1).iloc[-1])
     close_vs_entry = bool(work['Close'].iloc[-1] >= entry20.iloc[-1])
     close_vs_s2_entry = bool(work['Close'].iloc[-1] >= entry55.iloc[-1])
+    close_value = float(work['Close'].iloc[-1])
+    entry20_value = float(entry20.iloc[-1])
+    entry55_value = float(entry55.iloc[-1])
+
+    w_bottom = _detect_w_bottom(work['High'], work['Low'], work['Close'])
+    m_top = _detect_m_top(work['High'], work['Low'], work['Close'])
+    double_bottom = w_bottom
+    double_top = m_top
+    head_shoulders = _detect_head_shoulders(work['High'], work['Low'], work['Close'])
+    inverse_head_shoulders = _detect_inverse_head_shoulders(work['High'], work['Low'], work['Close'])
+    triangle_breakout, triangle_direction = _detect_triangle_breakout(work['High'], work['Low'], work['Close'])
+    bull_flag = _detect_bull_flag(work['High'], work['Low'], work['Close'])
+    bear_flag = _detect_bear_flag(work['High'], work['Low'], work['Close'])
+    candle_patterns = _detect_candlestick_patterns(work)
+    pattern_flags = {
+        'w_bottom': w_bottom,
+        'm_top': m_top,
+        'double_bottom': double_bottom,
+        'double_top': double_top,
+        'head_shoulders': head_shoulders,
+        'inverse_head_shoulders': inverse_head_shoulders,
+        'triangle_breakout': triangle_breakout,
+        'bull_flag': bull_flag,
+        'bear_flag': bear_flag,
+        **candle_patterns,
+    }
+    kline_patterns, kline_bullish_patterns, kline_bearish_patterns, kline_pattern_score = _kline_pattern_summary(
+        pattern_flags,
+        triangle_direction
+    )
+
+    s1_gap_pct = 0.0
+    s2_gap_pct = 0.0
+    if close_value > 0:
+        s1_gap_pct = max(0.0, ((entry20_value - close_value) / close_value) * 100.0)
+        s2_gap_pct = max(0.0, ((entry55_value - close_value) / close_value) * 100.0)
+    base_score = (
+        (22 if close_vs_entry else 0) +
+        (22 if close_vs_s2_entry else 0) +
+        (16 if s1_breakout else 0) +
+        (16 if s2_breakout else 0) -
+        (12 if s1_exit else 0) -
+        (12 if s2_exit else 0)
+    )
+    potential_score = max(0.0, min(100.0, base_score + kline_pattern_score - min(20.0, s1_gap_pct + s2_gap_pct)))
+    if potential_score >= 80:
+        potential_tier = 'A'
+    elif potential_score >= 60:
+        potential_tier = 'B'
+    elif potential_score >= 40:
+        potential_tier = 'C'
+    else:
+        potential_tier = 'D'
 
     last_date = work.index[-1]
     try:
@@ -197,12 +519,39 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'entry55': round(float(entry55.iloc[-1]), 2),
         'exit10': round(float(exit10.iloc[-1]), 2),
         'exit20': round(float(exit20.iloc[-1]), 2),
+        's1_gap_pct': round(s1_gap_pct, 2),
+        's2_gap_pct': round(s2_gap_pct, 2),
         'close_vs_entry': close_vs_entry,
         'close_vs_s2_entry': close_vs_s2_entry,
         's1_breakout': s1_breakout,
         's2_breakout': s2_breakout,
         's1_exit': s1_exit,
         's2_exit': s2_exit,
+        'w_bottom': w_bottom,
+        'm_top': m_top,
+        'double_bottom': double_bottom,
+        'double_top': double_top,
+        'head_shoulders': head_shoulders,
+        'inverse_head_shoulders': inverse_head_shoulders,
+        'triangle_breakout': triangle_breakout,
+        'triangle_breakout_direction': triangle_direction,
+        'bull_flag': bull_flag,
+        'bear_flag': bear_flag,
+        'gap_up': candle_patterns['gap_up'],
+        'gap_down': candle_patterns['gap_down'],
+        'bullish_engulfing': candle_patterns['bullish_engulfing'],
+        'bearish_engulfing': candle_patterns['bearish_engulfing'],
+        'doji': candle_patterns['doji'],
+        'hammer': candle_patterns['hammer'],
+        'shooting_star': candle_patterns['shooting_star'],
+        'kline_patterns': kline_patterns,
+        'kline_bullish_patterns': kline_bullish_patterns,
+        'kline_bearish_patterns': kline_bearish_patterns,
+        'kline_pattern_score': round(kline_pattern_score, 2),
+        'kline_bullish': bool(len(kline_bullish_patterns) > 0),
+        'kline_bearish': bool(len(kline_bearish_patterns) > 0),
+        'potential_score': round(potential_score, 2),
+        'potential_tier': potential_tier,
     }
 
 
@@ -306,7 +655,10 @@ def evaluate_ticker(
         }
 
     try:
-        sig = compute_signals_full(hist[['High', 'Low', 'Close']])
+        signal_columns = ['High', 'Low', 'Close']
+        if 'Open' in hist.columns:
+            signal_columns.insert(0, 'Open')
+        sig = compute_signals_full(hist[signal_columns])
     except Exception as e:
         return {
             'code': code, 'name': name, 'status': 'insufficient_data',

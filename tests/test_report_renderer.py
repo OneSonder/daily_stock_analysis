@@ -87,6 +87,8 @@ class TestReportRenderer(unittest.TestCase):
                             "close": 300,
                             "entry20": 290,
                             "entry55": 280,
+                            "kline_pattern_score": 5.0,
+                            "kline_patterns": ["w_bottom"],
                             "matched_conditions": ["close_vs_entry"],
                             "tradingview_url": "https://www.tradingview.com/chart/?symbol=HKEX:0700",
                         }
@@ -98,6 +100,8 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("技术筛选合格股", out)
         self.assertIn("0700.HK", out)
         self.assertIn("close_vs_entry", out)
+        self.assertIn("w_bottom", out)
+        self.assertIn("5.0", out)
         self.assertIn("tradingview.com/chart/?symbol=HKEX:0700", out)
 
     def test_render_markdown_full(self) -> None:

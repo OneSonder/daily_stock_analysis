@@ -13,7 +13,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from src.report_language import get_report_labels
-from src.services.hsi_scanner import HSI_STOCKS
+from src.services.hsi_scanner import HSI_STOCKS, parse_conditions
 from src.services.stock_universes import (
     DOW_STOCKS,
     NASDAQ_TOP_STOCKS,
@@ -32,6 +32,10 @@ from src.services.qualified_stock_scanner import (
 
 
 class TestQualifiedStockScanner(unittest.TestCase):
+    def test_parse_conditions_accepts_kline_patterns(self):
+        wanted = parse_conditions("w_bottom,m_top,bullish_engulfing")
+        self.assertEqual(wanted, {"w_bottom", "m_top", "bullish_engulfing"})
+
     def test_to_yahoo_code_from_manager_format(self):
         self.assertEqual(_to_yahoo_code("HK00700"), "0700.HK")
 
@@ -118,6 +122,11 @@ class TestQualifiedStockScanner(unittest.TestCase):
         annotated = annotate_matched_conditions(matches, {"close_vs_entry", "s1_breakout"})
         self.assertEqual(annotated[0]["matched_conditions"], ["close_vs_entry"])
 
+    def test_annotate_matched_conditions_with_kline(self):
+        matches = [{"code": "0700.HK", "w_bottom": True, "m_top": False}]
+        annotated = annotate_matched_conditions(matches, {"w_bottom", "m_top"})
+        self.assertEqual(annotated[0]["matched_conditions"], ["w_bottom"])
+
     @patch("src.services.qualified_stock_scanner.scan_stocks")
     def test_run_qualified_scan_disabled(self, mock_scan_stocks):
         config = MagicMock(report_qualified_scan_enabled=False)
@@ -173,6 +182,8 @@ class TestQualifiedStockScanner(unittest.TestCase):
                         "close": 300,
                         "entry20": 290,
                         "entry55": 280,
+                        "kline_pattern_score": 6.0,
+                        "kline_patterns": ["w_bottom", "bullish_engulfing"],
                         "matched_conditions": ["close_vs_entry"],
                     }
                 ],
@@ -182,6 +193,8 @@ class TestQualifiedStockScanner(unittest.TestCase):
         self.assertIn("技术筛选合格股", section)
         self.assertIn("0700.HK", section)
         self.assertIn("close_vs_entry", section)
+        self.assertIn("w_bottom", section)
+        self.assertIn("6.0", section)
         self.assertIn("tradingview.com/chart/?symbol=HKEX:0700", section)
 
 

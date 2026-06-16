@@ -130,6 +130,38 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("支撑/压力位", prompt)
         self.assertIn("洗盘观察", prompt)
 
+    def test_analysis_prompt_includes_senior_investor_policy_in_modern_prompt(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(
+                skill_instructions="",
+                default_skill_policy="",
+                use_legacy_default_prompt=False,
+            )
+
+        prompt = analyzer._get_analysis_system_prompt("en", stock_code="AAPL")
+
+        self.assertIn("50 years of experience", prompt)
+        self.assertIn("Chain of Verification", prompt)
+        self.assertIn("credible sources only", prompt)
+        self.assertIn("valuation multiples", prompt)
+        self.assertIn("competitor comparison", prompt)
+        self.assertIn("Do not reveal hidden chain-of-thought", prompt)
+
+    def test_analysis_prompt_includes_senior_investor_policy_in_legacy_prompt(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(
+                skill_instructions="",
+                default_skill_policy="",
+                use_legacy_default_prompt=True,
+            )
+
+        prompt = analyzer._get_analysis_system_prompt("en", stock_code="600519")
+
+        self.assertIn("50 years of experience", prompt)
+        self.assertIn("Chain of Verification", prompt)
+        self.assertIn("credible sources only", prompt)
+        self.assertIn("Do not reveal hidden chain-of-thought", prompt)
+
     def test_prompt_contains_time_constraints(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer()
@@ -217,6 +249,35 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
 
         self.assertIn("近1日的新闻搜索结果", prompt)
         self.assertIn("超出近1日窗口的新闻一律忽略", prompt)
+
+    def test_format_prompt_requires_data_unavailable_for_missing_en_inputs(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(
+                skill_instructions="",
+                default_skill_policy="",
+                use_legacy_default_prompt=False,
+            )
+
+        context = {
+            "code": "AAPL",
+            "stock_name": "Apple Inc.",
+            "date": "2026-06-16",
+            "today": {},
+        }
+
+        prompt = analyzer._format_prompt(
+            context,
+            "Apple Inc.",
+            news_context=None,
+            report_language="en",
+        )
+
+        self.assertIn("Data reliability and anti-hallucination guardrails", prompt)
+        self.assertIn("Never invent 5-year financials", prompt)
+        self.assertIn("competitor names", prompt)
+        self.assertIn("earnings-call notes", prompt)
+        self.assertIn("industry averages", prompt)
+        self.assertIn("data unavailable", prompt)
 
     def test_format_prompt_injects_market_phase_and_pack_summary_before_technical_data(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):

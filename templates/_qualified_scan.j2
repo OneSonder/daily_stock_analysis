@@ -6,10 +6,10 @@
 {% elif qualified_scan.skipped %}
 {{ qualified_scan.skip_reason or labels.qualified_scan_skipped }}
 {% elif qualified_scan.matches %}
-| {{ labels.qualified_scan_code }} | {{ labels.qualified_scan_name }} | {{ labels.qualified_scan_close }} | {{ labels.qualified_scan_entry20 }} | {{ labels.qualified_scan_entry55 }} | {{ labels.qualified_scan_matched }} |
-|------|------|-------|--------|--------|--------|
+| {{ labels.qualified_scan_code }} | {{ labels.qualified_scan_name }} | {{ labels.qualified_scan_close }} | {{ labels.qualified_scan_entry20 }} | {{ labels.qualified_scan_entry55 }} | {{ labels.qualified_scan_kline_score }} | {{ labels.qualified_scan_kline_patterns }} | {{ labels.qualified_scan_matched }} |
+|------|------|-------|--------|--------|--------|--------|--------|
 {% for item in qualified_scan.matches %}
-{% if item.tradingview_url %}| [{{ item.code }}]({{ item.tradingview_url }}){% else %}| {{ item.code }}{% endif %} | {{ item.name }} | {{ item.close }} | {{ item.entry20 }} | {{ item.entry55 }} | {{ item.matched_conditions|join(', ') }} |
+{% if item.tradingview_url %}| [{{ item.code }}]({{ item.tradingview_url }}){% else %}| {{ item.code }}{% endif %} | {{ item.name }} | {{ item.close }} | {{ item.entry20 }} | {{ item.entry55 }} | {{ item.kline_pattern_score if item.kline_pattern_score is not none else '' }} | {{ (item.kline_patterns or [])|join(', ') }} | {{ item.matched_conditions|join(', ') }} |
 {% endfor %}
 {% else %}
 {{ labels.qualified_scan_none }}

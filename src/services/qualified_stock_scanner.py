@@ -341,6 +341,14 @@ def run_qualified_scan(config: Any) -> Dict[str, Any]:
             }
             matches = _apply_plugin(matches, plugin_path, plugin_config)
 
+        def _score(row: Dict[str, Any]) -> float:
+            try:
+                return float(row.get("potential_score", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        matches = sorted(matches, key=_score, reverse=True)
+
         if max_results > 0:
             matches = matches[:max_results]
 
@@ -410,18 +418,23 @@ def format_qualified_scan_section(
             f"| {labels.get('qualified_scan_close', 'Close')} "
             f"| {labels.get('qualified_scan_entry20', 'Entry20')} "
             f"| {labels.get('qualified_scan_entry55', 'Entry55')} "
+            f"| {labels.get('qualified_scan_kline_score', 'K-Line Score')} "
+            f"| {labels.get('qualified_scan_kline_patterns', 'K-Line Patterns')} "
             f"| {labels.get('qualified_scan_matched', 'Matched')} |"
         ),
-        "|------|------|-------|--------|--------|--------|",
+        "|------|------|-------|--------|--------|--------|--------|--------|",
     ])
     for item in matches:
         matched = ", ".join(item.get("matched_conditions") or [])
+        patterns = ", ".join(item.get("kline_patterns") or [])
+        kline_score = item.get("kline_pattern_score", "")
         code = item.get("code", "")
         chart_url = item.get("tradingview_url") or to_tradingview_chart_url(code)
         code_cell = f"[{code}]({chart_url})" if code and chart_url else code
         lines.append(
             f"| {code_cell} | {item.get('name', '')} | {item.get('close', '')} "
-            f"| {item.get('entry20', '')} | {item.get('entry55', '')} | {matched} |"
+            f"| {item.get('entry20', '')} | {item.get('entry55', '')} "
+            f"| {kline_score} | {patterns} | {matched} |"
         )
     lines.append("")
     return "\n".join(lines)
