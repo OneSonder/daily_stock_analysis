@@ -15,9 +15,19 @@ on:
         type: choice
         options:
           - hsi-only      # 仅 HSI 技术筛选合格股（默认）
+          - us-only       # 仅美股技术筛选合格股（DOW/NASDAQ_TOP/US_TOP）
           - full          # 完整分析（股票+大盘）
           - market-only   # 仅大盘复盘
           - stocks-only   # 仅股票分析
+      us_scan_pool:
+        description: 'US-only 模式股票池（DOW / NASDAQ_TOP / US_TOP）'
+        required: false
+        default: 'US_TOP'
+        type: choice
+        options:
+          - US_TOP
+          - DOW
+          - NASDAQ_TOP
       force_run:
         description: '强制运行（跳过交易日检查）'
         required: false
@@ -393,6 +403,15 @@ jobs:
 
           # 判断运行模式
           MODE="${{ github.event.inputs.mode || 'hsi-only' }}"
+          US_SCAN_POOL_INPUT="${{ github.event.inputs.us_scan_pool || 'US_TOP' }}"
+
+          if [ "$MODE" = "us-only" ]; then
+            echo "🇺🇸 US-only 模式：强制仅执行美股技术筛选，不执行个股 AI / 大盘复盘"
+            STOCK_LIST=""
+            MARKET_REVIEW_ENABLED="false"
+            REPORT_QUALIFIED_SCAN_ENABLED="true"
+            REPORT_QUALIFIED_SCAN_STOCK_LIST="$US_SCAN_POOL_INPUT"
+          fi
           
           echo "=========================================="
           echo "🚀 A股自选股智能分析系统"
@@ -494,7 +513,7 @@ jobs:
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
             python main.py --market-review $FORCE_RUN_ARG
-          elif [ "$MODE" = "stocks-only" ] || [ "$MODE" = "hsi-only" ]; then
+          elif [ "$MODE" = "stocks-only" ] || [ "$MODE" = "hsi-only" ] || [ "$MODE" = "us-only" ]; then
             python main.py --no-market-review $FORCE_RUN_ARG
           else
             python main.py $FORCE_RUN_ARG

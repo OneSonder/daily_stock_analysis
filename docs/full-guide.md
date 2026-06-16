@@ -665,7 +665,8 @@ schedule:
 手动触发步骤：
 
 1. 打开 `Actions → 每日股票分析 → Run workflow`
-2. 选择 `mode`（`full` / `market-only` / `stocks-only`）
+2. 选择 `mode`（`hsi-only` / `us-only` / `full` / `market-only` / `stocks-only`）
+   - `us-only` 时可额外选择 `us_scan_pool`（`US_TOP` / `DOW` / `NASDAQ_TOP`）
 3. 若当天是非交易日且希望仍执行，将 `force_run` 设为 `true`
 4. 点击 `Run workflow`
 

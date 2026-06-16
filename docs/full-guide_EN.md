@@ -183,7 +183,8 @@ To get started quickly, you need at minimum:
 1. Go to `Actions` tab
 2. Select `Daily Stock Analysis` workflow on the left
 3. Click `Run workflow` button on the right
-4. Select run mode
+4. Select run mode (`hsi-only` / `us-only` / `full` / `market-only` / `stocks-only`)
+   - For `us-only`, also choose `us_scan_pool` (`US_TOP` / `DOW` / `NASDAQ_TOP`)
 5. Click green `Run workflow` to confirm
 
 ### 5. Done!
