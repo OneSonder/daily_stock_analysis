@@ -11,7 +11,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 
-from scan_signals import build_scan_payload, parse_conditions
+from scan_signals import (
+    build_scan_payload,
+    load_watchlist_file,
+    normalize_min_score,
+    normalize_top_n,
+    parse_conditions,
+    parse_universe,
+)
 
 app = Flask(__name__)
 app.secret_key = os.getenv('APP_SECRET_KEY', 'a_secret_key')
@@ -211,15 +218,31 @@ def api_scan():
     period = request.args.get('period', HISTORY_PERIOD)
     retries = request.args.get('retries', default=5, type=int)
     max_workers = request.args.get('max_workers', default=8, type=int)
+    universe = request.args.get('universe', default='hsi', type=str)
+    watchlist_file = request.args.get('watchlist_file', default=None, type=str)
+    collatz_step_limit = request.args.get('collatz_step_limit', default=12, type=int)
+    min_score = request.args.get('min_score', default='0', type=str)
+    top_n = request.args.get('top_n', default=None, type=int)
     conditions = request.args.get('conditions', default='close_vs_entry', type=str)
 
     try:
         parse_conditions(conditions)
+        if watchlist_file:
+            load_watchlist_file(watchlist_file)
+        else:
+            parse_universe(universe)
+        effective_min_score = normalize_min_score(min_score)
+        effective_top_n = normalize_top_n(top_n)
         payload = build_scan_payload(
             period=period,
             retries=retries,
             max_workers=max_workers,
-            conditions=conditions
+            conditions=conditions,
+            universe=universe,
+            collatz_step_limit=collatz_step_limit,
+            min_score=effective_min_score,
+            top_n=effective_top_n,
+            watchlist_file=watchlist_file,
         )
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
@@ -228,11 +251,16 @@ def api_scan():
         return jsonify({'error': str(exc)}), 500
 
     logger.info(
-        "path=/api/scan total_ms=%.2f period=%s retries=%s max_workers=%s conditions=%s",
+        "path=/api/scan total_ms=%.2f period=%s retries=%s max_workers=%s universe=%s watchlist=%s collatz_step_limit=%s min_score=%s top_n=%s conditions=%s",
         (time.perf_counter() - request_start) * 1000,
         period,
         retries,
         max_workers,
+        universe,
+        bool(watchlist_file),
+        collatz_step_limit,
+        min_score,
+        top_n,
         conditions
     )
     return jsonify(payload)
