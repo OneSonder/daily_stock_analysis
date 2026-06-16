@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 移除 `STOCK_LIST` 默认示例股 `600519`；留空时跳过个股 AI 分析，仅执行 HSI 技术筛选与大盘复盘。
 - [改进] 技术筛选合格股默认改为 `6mo` 窗口、`s1_breakout,s2_breakout` 条件、4 并发，继续默认走 yfinance。
 - [改进] 每日 Actions 默认改为 HSI-only：`STOCK_LIST` 留空、关闭大盘复盘，仅输出 HSI 技术筛选合格股报告。
+- [改进] 技术筛选合格股报告为命中股票附加 TradingView 图表链接，独立报告补充股票池/窗口/数据源摘要；Actions 配置检查新增邮件与 HSI 筛选状态。
+- [新功能] 技术筛选股票池新增 `DOW`、`NASDAQ_TOP`、`US_TOP` 内置静态美股列表，可通过 `REPORT_QUALIFIED_SCAN_STOCK_LIST` 在 HSI 之外切换扫描范围。
 - [新功能] 通知网关新增 ntfy 一等渠道，支持通过 `NTFY_URL` / `NTFY_TOKEN` 推送并接入 Web 测试、路由、Actions 与诊断。
 - [新功能] 通知网关新增 Gotify 一等渠道，支持通过 `GOTIFY_URL` / `GOTIFY_TOKEN` 推送 Markdown 文本并接入 Web 测试、路由、Actions 与诊断。
 - [修复] 收紧 ntfy 结构化校验，避免 URL 编码空白 topic 被误判为有效通知端点。

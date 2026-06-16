@@ -124,7 +124,7 @@ daily_stock_analysis/
 | `REPORT_HISTORY_COMPARE_N` | 历史信号对比条数，`0` 关闭（默认），`>0` 启用 | 可选 |
 | `REPORT_QUALIFIED_SCAN_ENABLED` | 是否在聚合日报中嵌入技术筛选合格股区块（默认 `true`） | 可选 |
 | `MARKET_REVIEW_ENABLED` | 是否启用大盘复盘；HSI-only 日报设为 `false`，并留空 `STOCK_LIST` | 可选 |
-| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 筛选股票池：`HSI`、逗号分隔代码，或 JSON 列表路径 | 可选 |
+| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 筛选股票池：`HSI`、`DOW`、`NASDAQ_TOP`、`US_TOP`、逗号分隔代码，或 JSON 列表路径 | 可选 |
 | `REPORT_QUALIFIED_SCAN_PERIOD` | 筛选历史窗口（默认 `6mo`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_CONDITIONS` | 内置条件（默认 `s1_breakout,s2_breakout`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_RULE_JSON` | 可选 JSON 规则，在基础条件后继续过滤 | 可选 |

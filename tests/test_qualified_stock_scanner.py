@@ -14,6 +14,11 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.report_language import get_report_labels
 from src.services.hsi_scanner import HSI_STOCKS
+from src.services.stock_universes import (
+    DOW_STOCKS,
+    NASDAQ_TOP_STOCKS,
+    US_TOP_STOCKS,
+)
 from src.services.qualified_stock_scanner import (
     _apply_json_rules,
     _to_yahoo_code,
@@ -21,6 +26,8 @@ from src.services.qualified_stock_scanner import (
     format_qualified_scan_section,
     resolve_universe,
     run_qualified_scan,
+    to_tradingview_chart_url,
+    to_tradingview_symbol,
 )
 
 
@@ -28,16 +35,57 @@ class TestQualifiedStockScanner(unittest.TestCase):
     def test_to_yahoo_code_from_manager_format(self):
         self.assertEqual(_to_yahoo_code("HK00700"), "0700.HK")
 
+    def test_to_tradingview_symbol_for_hk(self):
+        self.assertEqual(to_tradingview_symbol("0700.HK"), "HKEX:0700")
+        self.assertEqual(to_tradingview_symbol("HK00700"), "HKEX:0700")
+
+    def test_to_tradingview_chart_url(self):
+        self.assertEqual(
+            to_tradingview_chart_url("0700.HK"),
+            "https://www.tradingview.com/chart/?symbol=HKEX:0700",
+        )
+
+    def test_annotate_matched_conditions_adds_tradingview_url(self):
+        matches = [{"code": "0700.HK", "close_vs_entry": True}]
+        annotated = annotate_matched_conditions(matches, {"close_vs_entry"})
+        self.assertIn("tradingview_url", annotated[0])
+        self.assertIn("HKEX:0700", annotated[0]["tradingview_url"])
+
     def test_resolve_universe_hsi_token(self):
         stocks, label = resolve_universe("HSI")
         self.assertEqual(label, "hsi")
         self.assertEqual(len(stocks), len(HSI_STOCKS))
+
+    def test_resolve_universe_dow_token(self):
+        stocks, label = resolve_universe("DOW")
+        self.assertEqual(label, "dow")
+        self.assertEqual(len(stocks), len(DOW_STOCKS))
+        self.assertEqual(stocks[0]["code"], "AAPL")
+
+    def test_resolve_universe_nasdaq_top_token(self):
+        stocks, label = resolve_universe("NASDAQ_TOP")
+        self.assertEqual(label, "nasdaq_top")
+        self.assertEqual(len(stocks), len(NASDAQ_TOP_STOCKS))
+        self.assertEqual(stocks[0]["code"], "NVDA")
+
+    def test_resolve_universe_us_top_token(self):
+        stocks, label = resolve_universe("US_TOP")
+        self.assertEqual(label, "us_top")
+        self.assertEqual(len(stocks), len(US_TOP_STOCKS))
+        # merged list should keep deterministic order and remove duplicates
+        self.assertEqual(stocks[0]["code"], "AAPL")
+        self.assertEqual(len({item["code"] for item in stocks}), len(stocks))
 
     def test_resolve_universe_custom_codes(self):
         stocks, label = resolve_universe("HK00700,9988.HK")
         self.assertEqual(label, "custom")
         self.assertEqual(stocks[0]["code"], "0700.HK")
         self.assertEqual(stocks[1]["code"], "9988.HK")
+
+    def test_resolve_universe_custom_us_codes_keeps_yahoo_style(self):
+        stocks, label = resolve_universe("AAPL,MSFT,NVDA")
+        self.assertEqual(label, "custom")
+        self.assertEqual([item["code"] for item in stocks], ["AAPL", "MSFT", "NVDA"])
 
     def test_resolve_universe_json_file(self):
         payload = [{"code": "0700.HK", "name": "Tencent"}]
@@ -134,6 +182,7 @@ class TestQualifiedStockScanner(unittest.TestCase):
         self.assertIn("技术筛选合格股", section)
         self.assertIn("0700.HK", section)
         self.assertIn("close_vs_entry", section)
+        self.assertIn("tradingview.com/chart/?symbol=HKEX:0700", section)
 
 
 if __name__ == "__main__":

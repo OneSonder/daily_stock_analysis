@@ -310,6 +310,11 @@ _REPORT_LABELS: Dict[str, Dict[str, str]] = {
         "qualified_scan_entry20": "20日高点",
         "qualified_scan_entry55": "55日高点",
         "qualified_scan_matched": "命中条件",
+        "qualified_scan_chart": "图表",
+        "qualified_scan_universe": "股票池",
+        "qualified_scan_period": "数据窗口",
+        "qualified_scan_data_source": "数据源",
+        "qualified_scan_match_count": "命中数量",
     },
     "en": {
         "dashboard_title": "Decision Dashboard",
@@ -421,6 +426,11 @@ _REPORT_LABELS: Dict[str, Dict[str, str]] = {
         "qualified_scan_entry20": "20D High",
         "qualified_scan_entry55": "55D High",
         "qualified_scan_matched": "Matched",
+        "qualified_scan_chart": "Chart",
+        "qualified_scan_universe": "Universe",
+        "qualified_scan_period": "Period",
+        "qualified_scan_data_source": "Data Source",
+        "qualified_scan_match_count": "Matches",
     },
 }
 

@@ -122,6 +122,16 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_INTEGRITY_ENABLED` | Enable report integrity checks, retry or placeholder on missing fields (default `true`) | Optional |
 | `REPORT_INTEGRITY_RETRY` | Integrity retry count (default `1`, `0` = placeholder only) | Optional |
 | `REPORT_HISTORY_COMPARE_N` | History signal comparison count, `0` off (default), `>0` enable | Optional |
+| `REPORT_QUALIFIED_SCAN_ENABLED` | Enable qualified-stock section in aggregate reports (default `true`) | Optional |
+| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | Scan universe: `HSI`, `DOW`, `NASDAQ_TOP`, `US_TOP`, comma-separated symbols, or a JSON list path | Optional |
+| `REPORT_QUALIFIED_SCAN_PERIOD` | Historical window for the scan (default `6mo`) | Optional |
+| `REPORT_QUALIFIED_SCAN_CONDITIONS` | Built-in filter conditions (default `s1_breakout,s2_breakout`) | Optional |
+| `REPORT_QUALIFIED_SCAN_RULE_JSON` | Optional JSON rules applied after built-in conditions | Optional |
+| `REPORT_QUALIFIED_SCAN_PLUGIN` | Optional local Python plugin path for custom filtering | Optional |
+| `REPORT_QUALIFIED_SCAN_MAX_WORKERS` | Scan worker concurrency (default `4`) | Optional |
+| `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | Prefer multi-source data fetchers; default `false` to keep yfinance behavior | Optional |
+| `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | Max matched stocks shown in report (default `20`) | Optional |
+| `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | Restrict scan to HK trading days only (default `false`) | Optional |
 | `ANALYSIS_DELAY` | Delay between stock analysis and market review (seconds) to avoid API rate limits, e.g., `10` | Optional |
 | `NOTIFICATION_REPORT_CHANNELS` | Report route channels for single-stock, aggregate daily, market review, merged push, and Feishu document success notifications. Empty means all configured channels | Optional |
 | `NOTIFICATION_ALERT_CHANNELS` | Alert route channels for EventMonitor notifications. Empty means all configured channels | Optional |

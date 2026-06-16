@@ -399,8 +399,10 @@ jobs:
           echo "=========================================="
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
           echo "🎯 运行模式: $MODE"
-          echo "📊 自选股: $STOCK_LIST"
+          echo "📊 自选股: ${STOCK_LIST:-（空，跳过个股 AI 分析）}"
           echo "📝 报告类型: $REPORT_TYPE"
+          echo "🔍 合格股扫描: $REPORT_QUALIFIED_SCAN_ENABLED ($REPORT_QUALIFIED_SCAN_STOCK_LIST / $REPORT_QUALIFIED_SCAN_PERIOD)"
+          echo "📈 大盘复盘: $MARKET_REVIEW_ENABLED"
           echo ""
           echo "=========================================="
           echo "📋 配置检查"
@@ -442,6 +444,14 @@ jobs:
           esac
           echo ""
           echo "【通知渠道】"
+          echo "  邮件: $([ -n "$EMAIL_SENDER" ] && [ -n "$EMAIL_PASSWORD" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
+          if [ -n "$EMAIL_SENDER" ] && [ -n "$EMAIL_PASSWORD" ]; then
+            if [ -n "$EMAIL_RECEIVERS" ]; then
+              echo "  邮件收件人: ✅ 已配置"
+            else
+              echo "  邮件收件人: ⚪ 未配置（将发至发件人本人）"
+            fi
+          fi
           echo "  PushPlus: $([ -n "$PUSHPLUS_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  ntfy: $([ -n "$NTFY_URL" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  Gotify: $([ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
@@ -451,6 +461,26 @@ jobs:
           echo "  Discord: $([ -n "$DISCORD_WEBHOOK_URL" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  AstrBot: $([ -n "$ASTRBOT_URL" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  Slack: $(([ -n "$SLACK_WEBHOOK_URL" ] || ([ -n "$SLACK_BOT_TOKEN" ] && [ -n "$SLACK_CHANNEL_ID" ])) && echo '✅ 已配置' || echo '⚪ 未配置')"
+          if [ -n "$NOTIFICATION_REPORT_CHANNELS" ]; then
+            echo "  报告路由: ✅ $NOTIFICATION_REPORT_CHANNELS"
+          else
+            echo "  报告路由: ⚪ 未限制（使用全部已配置渠道）"
+          fi
+          echo ""
+          echo "【HSI 技术筛选】"
+          case "${REPORT_QUALIFIED_SCAN_ENABLED,,}" in
+            0|false|no|off)
+              echo "  合格股扫描: ❌ 已关闭"
+              ;;
+            *)
+              echo "  合格股扫描: ✅ 已启用"
+              echo "  股票池: $REPORT_QUALIFIED_SCAN_STOCK_LIST"
+              echo "  数据窗口: $REPORT_QUALIFIED_SCAN_PERIOD"
+              echo "  筛选条件: $REPORT_QUALIFIED_SCAN_CONDITIONS"
+              echo "  数据源: $([ "${REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE,,}" = "true" ] && echo 'multi-source' || echo 'yfinance')"
+              echo "  并发数: $REPORT_QUALIFIED_SCAN_MAX_WORKERS"
+              ;;
+          esac
           echo "=========================================="
           echo ""
           

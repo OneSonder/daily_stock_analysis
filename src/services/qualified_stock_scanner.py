@@ -22,6 +22,14 @@ from src.services.hsi_scanner import (
     parse_conditions,
     scan_stocks,
 )
+from src.services.stock_universes import (
+    DOW_LIST_TOKEN,
+    DOW_STOCKS,
+    NASDAQ_TOP_LIST_TOKEN,
+    NASDAQ_TOP_STOCKS,
+    US_TOP_LIST_TOKEN,
+    US_TOP_STOCKS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +43,10 @@ _HSI_NAME_BY_CODE = {
 _HSI_NAME_BY_MANAGER_CODE = {
     _code_to_manager_format(item["code"]): item.get("name", "")
     for item in HSI_STOCKS
+}
+_US_NAME_BY_CODE = {
+    item["code"].upper(): item.get("name", "")
+    for item in US_TOP_STOCKS
 }
 
 _RULE_OPERATORS: Dict[str, Callable[[Any, Any], bool]] = {
@@ -59,6 +71,33 @@ def _to_yahoo_code(code: str) -> str:
     if upper.startswith("HK") and upper[2:].isdigit():
         return f"{int(upper[2:]):04d}.HK"
     return upper
+
+
+TRADINGVIEW_CHART_URL_TEMPLATE = "https://www.tradingview.com/chart/?symbol={symbol}"
+
+
+def to_tradingview_symbol(code: str) -> str:
+    """Map Yahoo/manager codes to TradingView ``EXCHANGE:SYMBOL`` format."""
+    normalized = _to_yahoo_code(code)
+    upper = normalized.upper()
+    if upper.endswith(".HK"):
+        return f"HKEX:{upper[:-3]}"
+    if upper.endswith(".SS"):
+        return f"SSE:{upper[:-3]}"
+    if upper.endswith(".SZ"):
+        return f"SZSE:{upper[:-3]}"
+    if upper.isdigit() and len(upper) == 6:
+        if upper.startswith(("5", "6", "9")):
+            return f"SSE:{upper}"
+        return f"SZSE:{upper}"
+    if upper.isalpha() or (upper.isalnum() and len(upper) <= 5):
+        return f"NASDAQ:{upper}"
+    return upper
+
+
+def to_tradingview_chart_url(code: str) -> str:
+    """Build a TradingView chart URL for the given stock code."""
+    return TRADINGVIEW_CHART_URL_TEMPLATE.format(symbol=to_tradingview_symbol(code))
 
 
 def _load_stock_list_json(path: Path) -> List[Dict[str, str]]:
@@ -87,6 +126,8 @@ def _resolve_name(code: str, explicit_name: str = "") -> str:
     yahoo_code = _to_yahoo_code(code)
     if yahoo_code in _HSI_NAME_BY_CODE:
         return _HSI_NAME_BY_CODE[yahoo_code]
+    if yahoo_code.upper() in _US_NAME_BY_CODE:
+        return _US_NAME_BY_CODE[yahoo_code.upper()]
     manager_code = _code_to_manager_format(yahoo_code)
     return _HSI_NAME_BY_MANAGER_CODE.get(manager_code, "")
 
@@ -111,6 +152,12 @@ def resolve_universe(
 
     if raw.upper() == HSI_LIST_TOKEN:
         return list(HSI_STOCKS), "hsi"
+    if raw.upper() == DOW_LIST_TOKEN:
+        return list(DOW_STOCKS), "dow"
+    if raw.upper() == NASDAQ_TOP_LIST_TOKEN:
+        return list(NASDAQ_TOP_STOCKS), "nasdaq_top"
+    if raw.upper() == US_TOP_LIST_TOKEN:
+        return list(US_TOP_STOCKS), "us_top"
 
     if raw.lower().endswith(".json"):
         path = Path(raw).expanduser()
@@ -120,8 +167,16 @@ def resolve_universe(
             return _load_stock_list_json(path), "json"
 
     tokens = [token.strip() for token in raw.split(",") if token.strip()]
-    if len(tokens) == 1 and tokens[0].upper() == HSI_LIST_TOKEN:
-        return list(HSI_STOCKS), "hsi"
+    if len(tokens) == 1:
+        token = tokens[0].upper()
+        if token == HSI_LIST_TOKEN:
+            return list(HSI_STOCKS), "hsi"
+        if token == DOW_LIST_TOKEN:
+            return list(DOW_STOCKS), "dow"
+        if token == NASDAQ_TOP_LIST_TOKEN:
+            return list(NASDAQ_TOP_STOCKS), "nasdaq_top"
+        if token == US_TOP_LIST_TOKEN:
+            return list(US_TOP_STOCKS), "us_top"
 
     stocks = [
         {
@@ -222,6 +277,9 @@ def annotate_matched_conditions(
         row["matched_conditions"] = sorted(
             cond for cond in wanted_conditions if row.get(cond)
         )
+        code = row.get("code", "")
+        if code and not row.get("tradingview_url"):
+            row["tradingview_url"] = to_tradingview_chart_url(code)
         annotated.append(row)
     return annotated
 
@@ -300,6 +358,8 @@ def run_qualified_scan(config: Any) -> Dict[str, Any]:
             "skipped": False,
             "universe": universe_label,
             "conditions": sorted(wanted),
+            "period": period,
+            "data_source": data_source,
             "matches": matches,
             "no_price": payload.get("no_price", []),
             "stats": payload.get("stats", {}),
@@ -356,8 +416,11 @@ def format_qualified_scan_section(
     ])
     for item in matches:
         matched = ", ".join(item.get("matched_conditions") or [])
+        code = item.get("code", "")
+        chart_url = item.get("tradingview_url") or to_tradingview_chart_url(code)
+        code_cell = f"[{code}]({chart_url})" if code and chart_url else code
         lines.append(
-            f"| {item.get('code', '')} | {item.get('name', '')} | {item.get('close', '')} "
+            f"| {code_cell} | {item.get('name', '')} | {item.get('close', '')} "
             f"| {item.get('entry20', '')} | {item.get('entry55', '')} | {matched} |"
         )
     lines.append("")

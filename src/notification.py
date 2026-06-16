@@ -366,10 +366,33 @@ class NotificationService(
             f"# 🎯 {report_date} {labels['qualified_scan_heading']}",
             "",
         ]
+        summary_bits = []
+        if payload.get("universe"):
+            summary_bits.append(
+                f"{labels['qualified_scan_universe']}: **{str(payload['universe']).upper()}**"
+            )
+        if payload.get("period"):
+            summary_bits.append(f"{labels['qualified_scan_period']}: **{payload['period']}**")
+        if payload.get("data_source"):
+            summary_bits.append(
+                f"{labels['qualified_scan_data_source']}: **{payload['data_source']}**"
+            )
+        if payload.get("conditions"):
+            summary_bits.append(
+                f"{labels['qualified_scan_matched']}: **{', '.join(payload['conditions'])}**"
+            )
+        if summary_bits:
+            lines.append(" | ".join(summary_bits))
+            lines.append("")
         if section:
             lines.append(section)
         else:
             lines.append(labels.get("qualified_scan_none", "No qualified stocks"))
+        if payload.get("matches") is not None and not payload.get("error") and not payload.get("skipped"):
+            lines.extend([
+                "",
+                f"**{labels['qualified_scan_match_count']}**: {len(payload.get('matches') or [])}",
+            ])
         lines.extend([
             "",
             f"*{labels['generated_at_label']}：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
