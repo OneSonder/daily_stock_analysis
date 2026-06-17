@@ -134,6 +134,38 @@ Open the `Actions` tab and click `I understand my workflows, go ahead and enable
 
 `Actions` -> `Daily Stock Analysis` -> `Run workflow` -> `Run workflow`.
 
+#### Qualified scan (HSI / HK_ALL / US)
+
+Default **hsi-only**: skips per-stock AI and runs S1/S2 technical screening on Hang Seng Index constituents. `STOCK_LIST` can stay empty.
+
+| Usage | Description |
+|-------|-------------|
+| Actions `mode=hsi-only` | Default; scans `HSI` (~94 index constituents) |
+| Actions `mode=hk-all-only` | Scans full HK market `HK_ALL` (~2700+ symbols; slower—raise timeout/workers below) |
+| Actions `mode=us-only` | US pools: `US_TOP` / `DOW` / `NASDAQ_TOP` via `us_scan_pool` |
+| Variable `REPORT_QUALIFIED_SCAN_STOCK_LIST` | Override universe: `HSI`, `HK_ALL`, `DOW`, `NASDAQ_TOP`, `US_TOP`, or comma-separated codes |
+
+**Local / Variables example:**
+
+```bash
+# .env
+STOCK_LIST=
+MARKET_REVIEW_ENABLED=false
+REPORT_QUALIFIED_SCAN_ENABLED=true
+REPORT_QUALIFIED_SCAN_STOCK_LIST=HK_ALL   # or HSI / US_TOP, etc.
+REPORT_QUALIFIED_SCAN_PERIOD=6mo
+REPORT_QUALIFIED_SCAN_CONDITIONS=s1_breakout,s2_breakout
+python main.py --no-market-review
+```
+
+**Refresh the full HK list** (after IPOs/delistings):
+
+```bash
+python scripts/generate_hk_universe.py
+```
+
+`HK_ALL` is ~25x larger than `HSI`. For GitHub Actions, set Variables such as `ANALYSIS_TIMEOUT_MINUTES=60` and `REPORT_QUALIFIED_SCAN_MAX_WORKERS=8` (or higher). Details: [Full Guide](./full-guide_EN.md#complete-environment-variable-list).
+
 #### Done
 
 By default, the workflow runs every weekday at 18:00 Beijing time and skips non-trading days. Forced runs, trading-day checks, and resume rules are covered in the [Full Guide](./full-guide_EN.md#scheduled-task-configuration).

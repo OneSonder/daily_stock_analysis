@@ -2100,7 +2100,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "REPORT_QUALIFIED_SCAN_STOCK_LIST": {
         "title": "Qualified Scan Stock List",
-        "description": "Universe for qualified scan: HSI/DOW/NASDAQ_TOP/US_TOP token, comma-separated codes, or JSON path.",
+        "description": "Universe for qualified scan: HSI/HK_ALL/DOW/NASDAQ_TOP/US_TOP token, comma-separated codes, or JSON path.",
         "category": "notification",
         "data_type": "string",
         "ui_control": "text",
@@ -2114,6 +2114,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "help_key": "settings.report.REPORT_QUALIFIED_SCAN_STOCK_LIST",
         "examples": [
             "REPORT_QUALIFIED_SCAN_STOCK_LIST=HSI",
+            "REPORT_QUALIFIED_SCAN_STOCK_LIST=HK_ALL",
             "REPORT_QUALIFIED_SCAN_STOCK_LIST=DOW",
             "REPORT_QUALIFIED_SCAN_STOCK_LIST=NASDAQ_TOP",
             "REPORT_QUALIFIED_SCAN_STOCK_LIST=US_TOP",

@@ -133,6 +133,38 @@
 
 `Actions` → `每日股票分析` → `Run workflow` → `Run workflow`
 
+#### 技术筛选合格股（HSI / HK_ALL / 美股）
+
+默认 **HSI-only**：不跑个股 AI，仅对恒生指数成分股做 S1/S2 技术筛选并推送报告。`STOCK_LIST` 可留空。
+
+| 用法 | 说明 |
+|------|------|
+| Actions `mode=hsi-only` | 默认；扫描 `HSI`（约 94 只恒指成分） |
+| Actions `mode=hk-all-only` | 扫描全港股 `HK_ALL`（约 2700+ 只，较慢；建议提高超时与并发，见下） |
+| Actions `mode=us-only` | 扫描美股池：`US_TOP` / `DOW` / `NASDAQ_TOP`（`us_scan_pool`） |
+| Variable `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 覆盖股票池：`HSI`、`HK_ALL`、`DOW`、`NASDAQ_TOP`、`US_TOP` 或逗号分隔代码 |
+
+**本地 / Variables 示例：**
+
+```bash
+# .env
+STOCK_LIST=
+MARKET_REVIEW_ENABLED=false
+REPORT_QUALIFIED_SCAN_ENABLED=true
+REPORT_QUALIFIED_SCAN_STOCK_LIST=HK_ALL   # 或 HSI / US_TOP 等
+REPORT_QUALIFIED_SCAN_PERIOD=6mo
+REPORT_QUALIFIED_SCAN_CONDITIONS=s1_breakout,s2_breakout
+python main.py --no-market-review
+```
+
+**刷新全港股列表**（IPO/退市后定期执行）：
+
+```bash
+python scripts/generate_hk_universe.py
+```
+
+`HK_ALL` 体量约为 `HSI` 的 25 倍。GitHub Actions 建议设置 Variables：`ANALYSIS_TIMEOUT_MINUTES=60`、`REPORT_QUALIFIED_SCAN_MAX_WORKERS=8`（或更高）。细则见 [完整指南](docs/full-guide.md#环境变量完整列表)。
+
 #### 完成
 
 默认每个**工作日 18:00（北京时间）**自动执行，也可手动触发。默认非交易日（含 A/H/US 节假日）不执行；强制运行、交易日检查、断点续传等规则见 [完整指南](docs/full-guide.md#定时任务配置)。

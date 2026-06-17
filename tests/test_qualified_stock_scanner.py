@@ -18,9 +18,11 @@ from src.services.stock_universes import (
     DOW_STOCKS,
     NASDAQ_TOP_STOCKS,
     US_TOP_STOCKS,
+    load_hk_all_stocks,
 )
 from src.services.qualified_stock_scanner import (
     _apply_json_rules,
+    _resolve_name,
     _to_yahoo_code,
     annotate_matched_conditions,
     format_qualified_scan_section,
@@ -43,10 +45,18 @@ class TestQualifiedStockScanner(unittest.TestCase):
         self.assertEqual(to_tradingview_symbol("0700.HK"), "HKEX:0700")
         self.assertEqual(to_tradingview_symbol("HK00700"), "HKEX:0700")
 
+    def test_to_tradingview_symbol_for_us(self):
+        self.assertEqual(to_tradingview_symbol("JPM"), "JPM")
+        self.assertEqual(to_tradingview_symbol("AAPL"), "AAPL")
+
     def test_to_tradingview_chart_url(self):
         self.assertEqual(
             to_tradingview_chart_url("0700.HK"),
             "https://www.tradingview.com/chart/?symbol=HKEX:0700",
+        )
+        self.assertEqual(
+            to_tradingview_chart_url("JPM"),
+            "https://www.tradingview.com/chart/?symbol=JPM",
         )
 
     def test_annotate_matched_conditions_adds_tradingview_url(self):
@@ -59,6 +69,29 @@ class TestQualifiedStockScanner(unittest.TestCase):
         stocks, label = resolve_universe("HSI")
         self.assertEqual(label, "hsi")
         self.assertEqual(len(stocks), len(HSI_STOCKS))
+
+    def test_resolve_universe_hk_all_token(self):
+        stocks, label = resolve_universe("HK_ALL")
+        self.assertEqual(label, "hk_all")
+        self.assertGreater(len(stocks), len(HSI_STOCKS))
+        codes = {item["code"] for item in stocks}
+        self.assertTrue(all(code.endswith(".HK") for code in codes))
+        self.assertIn("0700.HK", codes)
+
+    @patch("src.services.qualified_stock_scanner.load_hk_all_stocks")
+    def test_resolve_name_hk_all_stock(self, mock_load_hk_all):
+        mock_load_hk_all.return_value = [
+            {"code": "0004.HK", "name": "九龍倉集團"},
+        ]
+        import src.services.qualified_stock_scanner as scanner_module
+        scanner_module._HK_ALL_NAME_BY_CODE = {}
+
+        self.assertEqual(_resolve_name("0004.HK"), "九龍倉集團")
+
+    def test_load_hk_all_stocks_matches_committed_snapshot(self):
+        stocks = load_hk_all_stocks(force_reload=True)
+        self.assertGreater(len(stocks), 1000)
+        self.assertEqual(stocks[0]["code"], "0001.HK")
 
     def test_resolve_universe_dow_token(self):
         stocks, label = resolve_universe("DOW")

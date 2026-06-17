@@ -124,7 +124,7 @@ daily_stock_analysis/
 | `REPORT_HISTORY_COMPARE_N` | 历史信号对比条数，`0` 关闭（默认），`>0` 启用 | 可选 |
 | `REPORT_QUALIFIED_SCAN_ENABLED` | 是否在聚合日报中嵌入技术筛选合格股区块（默认 `true`） | 可选 |
 | `MARKET_REVIEW_ENABLED` | 是否启用大盘复盘；HSI-only 日报设为 `false`，并留空 `STOCK_LIST` | 可选 |
-| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 筛选股票池：`HSI`、`DOW`、`NASDAQ_TOP`、`US_TOP`、逗号分隔代码，或 JSON 列表路径 | 可选 |
+| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | 筛选股票池：`HSI`、`HK_ALL`、`DOW`、`NASDAQ_TOP`、`US_TOP`、逗号分隔代码，或 JSON 列表路径 | 可选 |
 | `REPORT_QUALIFIED_SCAN_PERIOD` | 筛选历史窗口（默认 `6mo`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_CONDITIONS` | 内置条件（默认 `s1_breakout,s2_breakout`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_RULE_JSON` | 可选 JSON 规则，在基础条件后继续过滤 | 可选 |
@@ -665,8 +665,9 @@ schedule:
 手动触发步骤：
 
 1. 打开 `Actions → 每日股票分析 → Run workflow`
-2. 选择 `mode`（`hsi-only` / `us-only` / `full` / `market-only` / `stocks-only`）
+2. 选择 `mode`（`hsi-only` / `hk-all-only` / `us-only` / `full` / `market-only` / `stocks-only`）
    - `us-only` 时可额外选择 `us_scan_pool`（`US_TOP` / `DOW` / `NASDAQ_TOP`）
+   - `hk-all-only` 扫描全港股快照（`HK_ALL`，约 2700+ 标的；建议提高 `REPORT_QUALIFIED_SCAN_MAX_WORKERS` 与 `ANALYSIS_TIMEOUT_MINUTES`）
 3. 若当天是非交易日且希望仍执行，将 `force_run` 设为 `true`
 4. 点击 `Run workflow`
 

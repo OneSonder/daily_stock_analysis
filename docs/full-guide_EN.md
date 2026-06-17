@@ -123,7 +123,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_INTEGRITY_RETRY` | Integrity retry count (default `1`, `0` = placeholder only) | Optional |
 | `REPORT_HISTORY_COMPARE_N` | History signal comparison count, `0` off (default), `>0` enable | Optional |
 | `REPORT_QUALIFIED_SCAN_ENABLED` | Enable qualified-stock section in aggregate reports (default `true`) | Optional |
-| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | Scan universe: `HSI`, `DOW`, `NASDAQ_TOP`, `US_TOP`, comma-separated symbols, or a JSON list path | Optional |
+| `REPORT_QUALIFIED_SCAN_STOCK_LIST` | Scan universe: `HSI`, `HK_ALL`, `DOW`, `NASDAQ_TOP`, `US_TOP`, comma-separated symbols, or a JSON list path | Optional |
 | `REPORT_QUALIFIED_SCAN_PERIOD` | Historical window for the scan (default `6mo`) | Optional |
 | `REPORT_QUALIFIED_SCAN_CONDITIONS` | Built-in filter conditions (default `s1_breakout,s2_breakout`) | Optional |
 | `REPORT_QUALIFIED_SCAN_RULE_JSON` | Optional JSON rules applied after built-in conditions | Optional |
@@ -183,8 +183,9 @@ To get started quickly, you need at minimum:
 1. Go to `Actions` tab
 2. Select `Daily Stock Analysis` workflow on the left
 3. Click `Run workflow` button on the right
-4. Select run mode (`hsi-only` / `us-only` / `full` / `market-only` / `stocks-only`)
+4. Select run mode (`hsi-only` / `hk-all-only` / `us-only` / `full` / `market-only` / `stocks-only`)
    - For `us-only`, also choose `us_scan_pool` (`US_TOP` / `DOW` / `NASDAQ_TOP`)
+   - `hk-all-only` scans the full HK snapshot (`HK_ALL`, ~2700+ symbols; raise `REPORT_QUALIFIED_SCAN_MAX_WORKERS` and `ANALYSIS_TIMEOUT_MINUTES`)
 5. Click green `Run workflow` to confirm
 
 ### 5. Done!

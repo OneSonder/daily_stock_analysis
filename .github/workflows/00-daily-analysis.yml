@@ -15,6 +15,7 @@ on:
         type: choice
         options:
           - hsi-only      # 仅 HSI 技术筛选合格股（默认）
+          - hk-all-only   # 仅全港股技术筛选合格股（HK_ALL）
           - us-only       # 仅美股技术筛选合格股（DOW/NASDAQ_TOP/US_TOP）
           - full          # 完整分析（股票+大盘）
           - market-only   # 仅大盘复盘
@@ -411,6 +412,12 @@ jobs:
             MARKET_REVIEW_ENABLED="false"
             REPORT_QUALIFIED_SCAN_ENABLED="true"
             REPORT_QUALIFIED_SCAN_STOCK_LIST="$US_SCAN_POOL_INPUT"
+          elif [ "$MODE" = "hk-all-only" ]; then
+            echo "🇭🇰 HK-all-only 模式：强制仅执行全港股技术筛选（HK_ALL），不执行个股 AI / 大盘复盘"
+            STOCK_LIST=""
+            MARKET_REVIEW_ENABLED="false"
+            REPORT_QUALIFIED_SCAN_ENABLED="true"
+            REPORT_QUALIFIED_SCAN_STOCK_LIST="HK_ALL"
           fi
           
           echo "=========================================="
@@ -486,7 +493,7 @@ jobs:
             echo "  报告路由: ⚪ 未限制（使用全部已配置渠道）"
           fi
           echo ""
-          echo "【HSI 技术筛选】"
+          echo "【技术筛选】"
           case "${REPORT_QUALIFIED_SCAN_ENABLED,,}" in
             0|false|no|off)
               echo "  合格股扫描: ❌ 已关闭"
@@ -494,6 +501,9 @@ jobs:
             *)
               echo "  合格股扫描: ✅ 已启用"
               echo "  股票池: $REPORT_QUALIFIED_SCAN_STOCK_LIST"
+              if [ "$REPORT_QUALIFIED_SCAN_STOCK_LIST" = "HK_ALL" ]; then
+                echo "  提示: HK_ALL 约 2700+ 标的，建议提高 REPORT_QUALIFIED_SCAN_MAX_WORKERS 与 ANALYSIS_TIMEOUT_MINUTES"
+              fi
               echo "  数据窗口: $REPORT_QUALIFIED_SCAN_PERIOD"
               echo "  筛选条件: $REPORT_QUALIFIED_SCAN_CONDITIONS"
               echo "  数据源: $([ "${REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE,,}" = "true" ] && echo 'multi-source' || echo 'yfinance')"
@@ -513,7 +523,7 @@ jobs:
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
             python main.py --market-review $FORCE_RUN_ARG
-          elif [ "$MODE" = "stocks-only" ] || [ "$MODE" = "hsi-only" ] || [ "$MODE" = "us-only" ]; then
+          elif [ "$MODE" = "stocks-only" ] || [ "$MODE" = "hsi-only" ] || [ "$MODE" = "us-only" ] || [ "$MODE" = "hk-all-only" ]; then
             python main.py --no-market-review $FORCE_RUN_ARG
           else
             python main.py $FORCE_RUN_ARG

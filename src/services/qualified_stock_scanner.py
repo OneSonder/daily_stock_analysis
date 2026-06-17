@@ -25,6 +25,8 @@ from src.services.hsi_scanner import (
 from src.services.stock_universes import (
     DOW_LIST_TOKEN,
     DOW_STOCKS,
+    HK_ALL_LIST_TOKEN,
+    load_hk_all_stocks,
     NASDAQ_TOP_LIST_TOKEN,
     NASDAQ_TOP_STOCKS,
     US_TOP_LIST_TOKEN,
@@ -48,6 +50,20 @@ _US_NAME_BY_CODE = {
     item["code"].upper(): item.get("name", "")
     for item in US_TOP_STOCKS
 }
+_HK_ALL_NAME_BY_CODE: Dict[str, str] = {}
+
+
+def _hk_all_name_by_code() -> Dict[str, str]:
+    global _HK_ALL_NAME_BY_CODE
+    if not _HK_ALL_NAME_BY_CODE:
+        try:
+            _HK_ALL_NAME_BY_CODE = {
+                item["code"]: item.get("name", "")
+                for item in load_hk_all_stocks()
+            }
+        except (FileNotFoundError, ValueError):
+            _HK_ALL_NAME_BY_CODE = {}
+    return _HK_ALL_NAME_BY_CODE
 
 _RULE_OPERATORS: Dict[str, Callable[[Any, Any], bool]] = {
     "eq": lambda actual, expected: actual == expected,
@@ -77,7 +93,7 @@ TRADINGVIEW_CHART_URL_TEMPLATE = "https://www.tradingview.com/chart/?symbol={sym
 
 
 def to_tradingview_symbol(code: str) -> str:
-    """Map Yahoo/manager codes to TradingView ``EXCHANGE:SYMBOL`` format."""
+    """Map Yahoo/manager codes to TradingView chart symbol format."""
     normalized = _to_yahoo_code(code)
     upper = normalized.upper()
     if upper.endswith(".HK"):
@@ -91,7 +107,7 @@ def to_tradingview_symbol(code: str) -> str:
             return f"SSE:{upper}"
         return f"SZSE:{upper}"
     if upper.isalpha() or (upper.isalnum() and len(upper) <= 5):
-        return f"NASDAQ:{upper}"
+        return upper
     return upper
 
 
@@ -128,6 +144,9 @@ def _resolve_name(code: str, explicit_name: str = "") -> str:
         return _HSI_NAME_BY_CODE[yahoo_code]
     if yahoo_code.upper() in _US_NAME_BY_CODE:
         return _US_NAME_BY_CODE[yahoo_code.upper()]
+    hk_name = _hk_all_name_by_code().get(yahoo_code)
+    if hk_name:
+        return hk_name
     manager_code = _code_to_manager_format(yahoo_code)
     return _HSI_NAME_BY_MANAGER_CODE.get(manager_code, "")
 
@@ -152,6 +171,8 @@ def resolve_universe(
 
     if raw.upper() == HSI_LIST_TOKEN:
         return list(HSI_STOCKS), "hsi"
+    if raw.upper() == HK_ALL_LIST_TOKEN:
+        return load_hk_all_stocks(), "hk_all"
     if raw.upper() == DOW_LIST_TOKEN:
         return list(DOW_STOCKS), "dow"
     if raw.upper() == NASDAQ_TOP_LIST_TOKEN:
@@ -171,6 +192,8 @@ def resolve_universe(
         token = tokens[0].upper()
         if token == HSI_LIST_TOKEN:
             return list(HSI_STOCKS), "hsi"
+        if token == HK_ALL_LIST_TOKEN:
+            return load_hk_all_stocks(), "hk_all"
         if token == DOW_LIST_TOKEN:
             return list(DOW_STOCKS), "dow"
         if token == NASDAQ_TOP_LIST_TOKEN:
