@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
-- [改进] HSI Signal Scan GitHub Actions 改为每个交易日仅运行一次（香港时间 09:00 / UTC 01:00），默认 `3mo` + `s1_breakout,s2_breakout`；停用每日股票分析工作流的定时触发，仅保留手动运行。
+- [改进] HSI Signal Scan GitHub Actions 改为每个交易日仅运行一次（香港时间 09:00 / UTC 01:00），默认 `3mo` + `s1_breakout,s2_breakout`，并固定 `actions/checkout` 到 `mine` 分支；停用每日股票分析工作流的定时触发，仅保留手动运行。
 - [改进] HSI/技术筛选的 Yahoo Finance 路径改为批量下载并启用同日 OHLCV 磁盘缓存，批量缺失标的才以最多 2 次单股请求兜底，降低网络请求量与限流风险。
 - [新功能] 聚合日报支持嵌入可配置的技术筛选合格股区块，复用 S1/S2 扫描逻辑并支持 HSI 股票池、JSON 规则与本地插件扩展。
 - [改进] 技术筛选合格股默认启用并扫描 HSI 列表，默认使用 yfinance；即使个股 AI 分析失败也会保存 `qualified_scan_*.md` 报告。
