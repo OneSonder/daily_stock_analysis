@@ -131,6 +131,8 @@ daily_stock_analysis/
 | `REPORT_QUALIFIED_SCAN_PLUGIN` | 可选本地 Python 插件路径，完全自定义过滤逻辑 | 可选 |
 | `REPORT_QUALIFIED_SCAN_MAX_WORKERS` | 筛选并发数（默认 `4`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | 是否优先使用多数据源抓取；默认 `false`，与小程序一致走 yfinance | 可选 |
+| `REPORT_QUALIFIED_SCAN_CACHE_ENABLED` | 是否启用技术筛选 OHLCV 同日磁盘缓存（默认 `true`）；同日重复运行可避免再次请求 Yahoo Finance | 可选 |
+| `REPORT_QUALIFIED_SCAN_CACHE_DIR` | 技术筛选 OHLCV 缓存目录（默认 `data/cache/ohlcv`，相对项目根目录） | 可选 |
 | `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | 报告中最多展示多少只合格股（默认 `20`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | 是否仅在港股交易日执行筛选（默认 `false`） | 可选 |
 | `ANALYSIS_DELAY` | 个股分析和大盘分析之间的延迟（秒），避免API限流，如 `10` | 可选 |
@@ -148,6 +150,8 @@ daily_stock_analysis/
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
 | `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认，需 wkhtmltopdf）或 `markdown-to-file`（emoji 更好，需 `npm i -g markdown-to-file`） | 可选 |
 | `PREFETCH_REALTIME_QUOTES` | 设为 `false` 可禁用实时行情预取，避免 efinance/akshare_em 全市场拉取（默认 true） | 可选 |
+
+> Yahoo 网络用量：当 `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE=false` 时，技术筛选会把未命中缓存的股票合并为一次 `yfinance.download` 批量请求，并把结果缓存到当天。批量结果缺少个别股票时才使用单股请求兜底，最多重试 2 次。仅启用 S1/S2 时最长窗口为 55 个交易日，可将 `REPORT_QUALIFIED_SCAN_PERIOD=3mo` 以减少下载量；默认仍为 `6mo`。
 
 > 兼容性说明：`REPORT_SHOW_LLM_MODEL` 维持默认 `true` 的原始展示语义，关闭时只影响底部模型文案输出。该配置不会变更 provider/model/Base URL、LiteLLM 路由、模型保存、迁移或清理语义；回退方式为恢复或删除该变量，并设为 `true`。
 

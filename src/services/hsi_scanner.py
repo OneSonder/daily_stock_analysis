@@ -631,22 +631,78 @@ def fetch_history_with_retries(
     return pd.DataFrame()
 
 
-def evaluate_ticker(
+def _split_yfinance_batch(
+    raw: pd.DataFrame,
+    codes: List[str],
+) -> Dict[str, pd.DataFrame]:
+    """Split a yfinance batch response into one frame per requested ticker."""
+    if raw is None or raw.empty:
+        return {}
+
+    histories: Dict[str, pd.DataFrame] = {}
+    if not isinstance(raw.columns, pd.MultiIndex):
+        if len(codes) == 1:
+            frame = raw.dropna(how='all')
+            if not frame.empty:
+                histories[codes[0]] = frame
+        return histories
+
+    for code in codes:
+        frame: Optional[pd.DataFrame] = None
+        for level in range(raw.columns.nlevels):
+            values = raw.columns.get_level_values(level)
+            if code in values:
+                frame = raw.xs(code, axis=1, level=level, drop_level=True)
+                break
+        if frame is None:
+            continue
+        if isinstance(frame.columns, pd.MultiIndex):
+            frame.columns = frame.columns.get_level_values(0)
+        frame = frame.dropna(how='all')
+        if not frame.empty:
+            histories[code] = frame
+    return histories
+
+
+def fetch_history_batch_yfinance(
+    codes: List[str],
+    period: str,
+) -> Dict[str, pd.DataFrame]:
+    """Download multiple Yahoo histories in one batch request."""
+    if not codes:
+        return {}
+    import yfinance as yf
+
+    unique_codes = list(dict.fromkeys(code.strip().upper() for code in codes if code.strip()))
+    logger.info(
+        "Yahoo batch download starting: tickers=%s period=%s",
+        len(unique_codes),
+        period,
+    )
+    raw = yf.download(
+        tickers=unique_codes,
+        period=period,
+        group_by='ticker',
+        threads=False,
+        progress=False,
+        auto_adjust=True,
+    )
+    histories = _split_yfinance_batch(raw, unique_codes)
+    logger.info(
+        "Yahoo batch download completed: requested=%s received=%s",
+        len(unique_codes),
+        len(histories),
+    )
+    return histories
+
+
+def evaluate_ticker_from_history(
     code: str,
     name: str,
-    period: str = '1y',
-    retries: int = 5,
-    use_multi_source: bool = False,
+    hist: pd.DataFrame,
 ) -> Dict[str, Any]:
+    """Compute one ticker result from an already-fetched history frame."""
     yahoo_url = YAHOO_URL_TEMPLATE.format(code=code)
-    try:
-        hist = fetch_history_with_retries(code, period, retries=retries, use_multi_source=use_multi_source)
-    except Exception as e:
-        return {
-            'code': code, 'name': name, 'status': 'error',
-            'message': str(e), 'url': yahoo_url,
-        }
-
     if hist is None or hist.empty:
         return {
             'code': code, 'name': name, 'status': 'empty',
@@ -671,6 +727,25 @@ def evaluate_ticker(
     }
 
 
+def evaluate_ticker(
+    code: str,
+    name: str,
+    period: str = '1y',
+    retries: int = 5,
+    use_multi_source: bool = False,
+) -> Dict[str, Any]:
+    yahoo_url = YAHOO_URL_TEMPLATE.format(code=code)
+    try:
+        hist = fetch_history_with_retries(code, period, retries=retries, use_multi_source=use_multi_source)
+    except Exception as e:
+        return {
+            'code': code, 'name': name, 'status': 'error',
+            'message': str(e), 'url': yahoo_url,
+        }
+
+    return evaluate_ticker_from_history(code, name, hist)
+
+
 def evaluate_ticker_timed(
     code: str,
     name: str,
@@ -680,6 +755,17 @@ def evaluate_ticker_timed(
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     result = evaluate_ticker(code, name, period=period, retries=retries, use_multi_source=use_multi_source)
+    result['elapsed_ms'] = round((time.perf_counter() - started) * 1000, 2)
+    return result
+
+
+def evaluate_ticker_from_history_timed(
+    code: str,
+    name: str,
+    hist: pd.DataFrame,
+) -> Dict[str, Any]:
+    started = time.perf_counter()
+    result = evaluate_ticker_from_history(code, name, hist)
     result['elapsed_ms'] = round((time.perf_counter() - started) * 1000, 2)
     return result
 
@@ -721,28 +807,73 @@ def scan_stocks(
     started = time.perf_counter()
     results: List[Dict[str, Any]] = [None] * len(stocks)
     worker_count = max(1, max_workers)
+    prefetched: Dict[str, pd.DataFrame] = {}
+    cache_hits = 0
+    batch_downloaded = 0
+
+    if not use_multi_source:
+        from src.services.ohlcv_cache import load_cached_history, save_cached_history
+
+        missing_codes: List[str] = []
+        for item in stocks:
+            code = item.get('code', '').strip().upper()
+            if not code:
+                continue
+            cached = load_cached_history(code, period)
+            if cached is not None:
+                prefetched[code] = cached
+                cache_hits += 1
+            else:
+                missing_codes.append(code)
+
+        if missing_codes:
+            try:
+                downloaded = fetch_history_batch_yfinance(missing_codes, period)
+            except Exception as exc:
+                logger.warning(
+                    "Yahoo batch download failed; using per-ticker fallback for %s tickers: %s",
+                    len(missing_codes),
+                    exc,
+                )
+                downloaded = {}
+            for code, frame in downloaded.items():
+                prefetched[code] = frame
+                save_cached_history(code, period, frame)
+            batch_downloaded = len(downloaded)
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        future_to_idx = {
-            executor.submit(
-                evaluate_ticker_timed,
-                item.get('code', ''),
-                item.get('name', ''),
-                period,
-                retries,
-                use_multi_source,
-            ): idx
-            for idx, item in enumerate(stocks)
-        }
+        future_to_idx = {}
+        for idx, item in enumerate(stocks):
+            code = item.get('code', '').strip().upper()
+            if code in prefetched:
+                future = executor.submit(
+                    evaluate_ticker_from_history_timed,
+                    code,
+                    item.get('name', ''),
+                    prefetched[code],
+                )
+            else:
+                fallback_retries = retries if use_multi_source else min(retries, 2)
+                future = executor.submit(
+                    evaluate_ticker_timed,
+                    code,
+                    item.get('name', ''),
+                    period,
+                    fallback_retries,
+                    use_multi_source,
+                )
+            future_to_idx[future] = idx
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             results[idx] = future.result()
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
     logger.info(
-        "scan_stocks tickers=%s max_workers=%s total_ms=%.2f",
+        "scan_stocks tickers=%s max_workers=%s cache_hits=%s batch_downloaded=%s total_ms=%.2f",
         len(stocks),
         worker_count,
+        cache_hits,
+        batch_downloaded,
         total_ms,
     )
 
@@ -758,6 +889,8 @@ def scan_stocks(
         'stats': {
             'tickers': len(stocks),
             'max_workers': worker_count,
+            'cache_hits': cache_hits,
+            'batch_downloaded': batch_downloaded,
             'total_ms': total_ms,
         },
         'skipped': False,

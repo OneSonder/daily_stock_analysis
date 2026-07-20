@@ -130,6 +130,8 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_QUALIFIED_SCAN_PLUGIN` | Optional local Python plugin path for custom filtering | Optional |
 | `REPORT_QUALIFIED_SCAN_MAX_WORKERS` | Scan worker concurrency (default `4`) | Optional |
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | Prefer multi-source data fetchers; default `false` to keep yfinance behavior | Optional |
+| `REPORT_QUALIFIED_SCAN_CACHE_ENABLED` | Enable the qualified-scan same-day OHLCV disk cache (default `true`); repeated runs that day avoid another Yahoo Finance request | Optional |
+| `REPORT_QUALIFIED_SCAN_CACHE_DIR` | Qualified-scan OHLCV cache directory (default `data/cache/ohlcv`, relative to project root) | Optional |
 | `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | Max matched stocks shown in report (default `20`) | Optional |
 | `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | Restrict scan to HK trading days only (default `false`) | Optional |
 | `ANALYSIS_DELAY` | Delay between stock analysis and market review (seconds) to avoid API rate limits, e.g., `10` | Optional |
@@ -142,6 +144,8 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `NOTIFICATION_TIMEZONE` | IANA timezone for quiet hours, e.g. `Asia/Shanghai`. Empty follows `TZ` or the local system timezone | Optional |
 | `NOTIFICATION_MIN_SEVERITY` | Minimum severity: `info`, `warning`, `error`, `critical`. Empty keeps current behavior | Optional |
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | Reserved daily digest flag. The current implementation does not send or persist digests | Optional |
+
+> Yahoo network usage: with `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE=false`, the qualified scan combines all cache misses into one `yfinance.download` batch and caches the results for the current day. Only symbols absent from the batch use the per-symbol fallback, capped at 2 attempts. S1/S2 needs at most 55 trading days, so `REPORT_QUALIFIED_SCAN_PERIOD=3mo` reduces transfer size; the default remains `6mo`.
 
 > Compatibility note: `REPORT_SHOW_LLM_MODEL` keeps the previous default-visible behavior (`true`) and only changes report footer rendering. It does not alter provider/model/Base URL, LiteLLM routing, or runtime model persistence/migration/cleanup semantics. Rollback is to remove the variable or set it back to `true`.
 
