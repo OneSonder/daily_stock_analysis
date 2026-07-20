@@ -2,18 +2,14 @@ name: HSI Signal Scan
 
 on:
   schedule:
-    # Run hourly during HK market hours (HKT 09:30-16:00 = UTC 01:30-08:00) Mon-Fri
-    - cron: '30 1 * * 1-5'
-    - cron: '0 3 * * 1-5'
-    - cron: '30 4 * * 1-5'
-    - cron: '0 6 * * 1-5'
-    - cron: '30 7 * * 1-5'
+    # Once daily at 09:00 HKT (UTC 01:00), Mon-Fri
+    - cron: '0 1 * * 1-5'
   workflow_dispatch:
     inputs:
       period:
         description: 'History period'
         required: false
-        default: '1y'
+        default: '3mo'
         type: choice
         options: ['5d', '1mo', '3mo', '6mo', '1y', '2y']
       conditions:
@@ -24,7 +20,7 @@ on:
 
 env:
   PYTHONUNBUFFERED: '1'
-  HSI_SCAN_PERIOD: ${{ inputs.period || '1y' }}
+  HSI_SCAN_PERIOD: ${{ inputs.period || '3mo' }}
   HSI_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
 
 jobs:
@@ -67,7 +63,7 @@ jobs:
               os.environ['EMAIL_PASSWORD'] = '${{ secrets.EMAIL_PASSWORD }}'
 
           payload = scan_hsi_and_notify(
-              period=os.getenv('HSI_SCAN_PERIOD', '1y'),
+              period=os.getenv('HSI_SCAN_PERIOD', '3mo'),
               conditions=os.getenv('HSI_SCAN_CONDITIONS', 's1_breakout,s2_breakout'),
           )
 
