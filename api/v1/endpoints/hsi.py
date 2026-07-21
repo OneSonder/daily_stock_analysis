@@ -24,11 +24,44 @@ async def hsi_scan(
     max_workers: int = Query(8, ge=1, le=16, description="Max parallel workers"),
     check_trading_day: bool = Query(True, description="Skip if HK market closed"),
     output: str = Query("json", description="Output format: json, markdown"),
+    enrich: bool = Query(
+        False,
+        description="When true, enrich top-N matches with quote + news + lite LLM dashboard",
+    ),
+    top_n: int = Query(5, ge=1, le=20, description="Top-N matches to enrich when enrich=true"),
 ) -> dict:
     try:
         parse_conditions(conditions)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if enrich:
+        from src.services.hsi_enrichment import run_hsi_scan_enriched
+
+        result = run_hsi_scan_enriched(
+            period=period,
+            conditions=conditions,
+            max_workers=max_workers,
+            check_trading_day=check_trading_day,
+            use_multi_source=True,
+            top_n=top_n,
+            save_report=True,
+        )
+        payload = result["payload"]
+        if output == "markdown":
+            return {
+                "report": result["report_text"],
+                "report_path": result.get("report_path"),
+                "matches": payload.get("matches") or [],
+                "top_n": result.get("top_n"),
+            }
+        return {
+            **payload,
+            "report": result["report_text"],
+            "report_path": result.get("report_path"),
+            "top_n": result.get("top_n"),
+            "enriched_count": len(result.get("enrichments") or []),
+        }
 
     if check_trading_day and not is_hk_market_open():
         return {

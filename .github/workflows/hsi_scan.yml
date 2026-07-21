@@ -17,16 +17,22 @@ on:
         required: false
         default: 's1_breakout,s2_breakout'
         type: string
+      top_n:
+        description: 'Top-N matches to enrich (quote + news + LLM)'
+        required: false
+        default: '5'
+        type: string
 
 env:
   PYTHONUNBUFFERED: '1'
   HSI_SCAN_PERIOD: ${{ inputs.period || '3mo' }}
   HSI_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
+  HSI_ENRICH_TOP_N: ${{ inputs.top_n || '5' }}
 
 jobs:
   hsi-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -38,28 +44,92 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install yfinance pandas numpy python-dotenv exchange-calendars
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run HSI scan
+      - name: Run HSI scan + lite enrichment
         id: scan
+        env:
+          # LLM
+          LITELLM_CONFIG: ${{ vars.LITELLM_CONFIG || secrets.LITELLM_CONFIG }}
+          LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
+          LITELLM_FALLBACK_MODELS: ${{ vars.LITELLM_FALLBACK_MODELS || secrets.LITELLM_FALLBACK_MODELS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEYS: ${{ secrets.OPENAI_API_KEYS }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
+          AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANSPIRE_API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }}
+          ANSPIRE_LLM_MODEL: ${{ vars.ANSPIRE_LLM_MODEL || secrets.ANSPIRE_LLM_MODEL }}
+          ANSPIRE_LLM_BASE_URL: ${{ vars.ANSPIRE_LLM_BASE_URL || secrets.ANSPIRE_LLM_BASE_URL }}
+          ANSPIRE_LLM_ENABLED: ${{ vars.ANSPIRE_LLM_ENABLED || secrets.ANSPIRE_LLM_ENABLED }}
+          LLM_PRIMARY_API_KEY: ${{ secrets.LLM_PRIMARY_API_KEY }}
+          LLM_PRIMARY_API_KEYS: ${{ secrets.LLM_PRIMARY_API_KEYS }}
+          LLM_PRIMARY_BASE_URL: ${{ vars.LLM_PRIMARY_BASE_URL || secrets.LLM_PRIMARY_BASE_URL }}
+          LLM_PRIMARY_MODELS: ${{ vars.LLM_PRIMARY_MODELS || secrets.LLM_PRIMARY_MODELS }}
+          LLM_PRIMARY_ENABLED: ${{ vars.LLM_PRIMARY_ENABLED || secrets.LLM_PRIMARY_ENABLED }}
+          # Search
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
+          MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
+          BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
+          SEARXNG_BASE_URLS: ${{ secrets.SEARXNG_BASE_URLS }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED }}
+          # HK quote sources
+          LONGBRIDGE_APP_KEY: ${{ secrets.LONGBRIDGE_APP_KEY }}
+          LONGBRIDGE_APP_SECRET: ${{ secrets.LONGBRIDGE_APP_SECRET }}
+          LONGBRIDGE_ACCESS_TOKEN: ${{ secrets.LONGBRIDGE_ACCESS_TOKEN }}
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: |
-          python -c "
-          import os, sys, json
-          sys.path.insert(0, '.')
-          from src.services.hsi_scanner import scan_hsi, format_scan_report
+          if [ -n "$LITELLM_CONFIG_YAML" ] && [ -n "$LITELLM_CONFIG" ]; then
+            mkdir -p "$(dirname "$LITELLM_CONFIG")"
+            echo "$LITELLM_CONFIG_YAML" > "$LITELLM_CONFIG"
+          fi
+          mkdir -p reports
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-          payload = scan_hsi(
-              period=os.getenv('HSI_SCAN_PERIOD', '3mo'),
-              conditions=os.getenv('HSI_SCAN_CONDITIONS', 's1_breakout,s2_breakout'),
+          from src.services.hsi_enrichment import run_hsi_scan_enriched
+
+          result = run_hsi_scan_enriched(
+              period=os.getenv("HSI_SCAN_PERIOD", "3mo"),
+              conditions=os.getenv("HSI_SCAN_CONDITIONS", "s1_breakout,s2_breakout"),
               check_trading_day=True,
-              use_multi_source=False,
+              use_multi_source=True,
+              top_n=int(os.getenv("HSI_ENRICH_TOP_N", "5") or "5"),
+              reports_dir=Path("reports"),
+              save_report=True,
           )
-
-          print(json.dumps(payload['stats'], indent=2))
-          print(f'Matched: {len(payload.get(\"matches\") or [])} stocks')
+          payload = result["payload"]
+          print(json.dumps(payload.get("stats") or {}, indent=2))
+          print(f"Matched: {len(payload.get('matches') or [])} stocks")
+          print(f"Enriched top_n: {result.get('top_n')}")
+          print(f"Report path: {result.get('report_path')}")
           print()
-          print(format_scan_report(payload))
-          "
+          print(result.get("report_text") or "")
+          if result.get("report_path"):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"report_path={result['report_path']}\n")
+          PY
+
+      - name: Upload enriched report
+        if: always() && steps.scan.outputs.report_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hsi-enriched-report
+          path: reports/hsi_enriched_*.md
+          if-no-files-found: warn
