@@ -109,7 +109,7 @@ jobs:
               period=os.getenv("HSI_SCAN_PERIOD", "3mo"),
               conditions=os.getenv("HSI_SCAN_CONDITIONS", "s1_breakout,s2_breakout"),
               check_trading_day=True,
-              use_multi_source=True,
+              use_multi_source=False,
               top_n=int(os.getenv("HSI_ENRICH_TOP_N", "5") or "5"),
               reports_dir=Path("reports"),
               save_report=True,

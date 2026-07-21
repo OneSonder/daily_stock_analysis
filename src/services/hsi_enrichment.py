@@ -375,9 +375,10 @@ def save_enriched_report(report_text: str, reports_dir: Optional[Path] = None) -
 
 
 def _default_fetcher():
-    from data_provider import DataFetcherManager
+    """Prefer Yahoo Finance for HSI enrichment quotes (avoid AkShare HK disconnects)."""
+    from data_provider.yfinance_fetcher import YfinanceFetcher
 
-    return DataFetcherManager()
+    return YfinanceFetcher()
 
 
 def _default_search():

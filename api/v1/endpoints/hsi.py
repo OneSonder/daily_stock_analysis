@@ -43,7 +43,7 @@ async def hsi_scan(
             conditions=conditions,
             max_workers=max_workers,
             check_trading_day=check_trading_day,
-            use_multi_source=True,
+            use_multi_source=False,
             top_n=top_n,
             save_report=True,
         )
