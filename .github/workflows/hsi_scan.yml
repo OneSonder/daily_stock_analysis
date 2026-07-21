@@ -41,29 +41,30 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install yfinance pandas numpy python-dotenv exchange-calendars
+          # Scan deps + notification import chain (NotificationService → email_sender → data_provider → tenacity)
+          pip install \
+            yfinance pandas numpy python-dotenv exchange-calendars \
+            tenacity requests markdown2
 
       - name: Run HSI scan
         id: scan
+        env:
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EMAIL_SENDER: ${{ vars.EMAIL_SENDER || secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ vars.EMAIL_RECEIVERS || secrets.EMAIL_RECEIVERS }}
+          EMAIL_SENDER_NAME: ${{ vars.EMAIL_SENDER_NAME || secrets.EMAIL_SENDER_NAME || 'daily_stock_analysis股票分析助手' }}
+          EMAIL_SMTP_HOST: ${{ vars.EMAIL_SMTP_HOST || secrets.EMAIL_SMTP_HOST }}
+          EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT || secrets.EMAIL_SMTP_PORT }}
         run: |
           python -c "
           import os, sys, json
           sys.path.insert(0, '.')
-          from src.services.hsi_scanner import scan_hsi_and_notify
-
-          # Inject notification configs from GitHub Secrets
-          if '${{ secrets.WECHAT_WEBHOOK_URL }}':
-              os.environ['WECHAT_WEBHOOK_URL'] = '${{ secrets.WECHAT_WEBHOOK_URL }}'
-          if '${{ secrets.FEISHU_WEBHOOK_URL }}':
-              os.environ['FEISHU_WEBHOOK_URL'] = '${{ secrets.FEISHU_WEBHOOK_URL }}'
-          if '${{ secrets.TELEGRAM_BOT_TOKEN }}':
-              os.environ['TELEGRAM_BOT_TOKEN'] = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
-              os.environ['TELEGRAM_CHAT_ID'] = '${{ secrets.TELEGRAM_CHAT_ID }}'
-          if '${{ secrets.DISCORD_WEBHOOK_URL }}':
-              os.environ['DISCORD_WEBHOOK_URL'] = '${{ secrets.DISCORD_WEBHOOK_URL }}'
-          if '${{ secrets.EMAIL_SENDER }}':
-              os.environ['EMAIL_SENDER'] = '${{ secrets.EMAIL_SENDER }}'
-              os.environ['EMAIL_PASSWORD'] = '${{ secrets.EMAIL_PASSWORD }}'
+          from src.services.hsi_scanner import scan_hsi_and_notify, format_scan_report
 
           payload = scan_hsi_and_notify(
               period=os.getenv('HSI_SCAN_PERIOD', '3mo'),
@@ -71,5 +72,7 @@ jobs:
           )
 
           print(json.dumps(payload['stats'], indent=2))
-          print(f'Matched: {len(payload[\"matches\"])} stocks')
+          print(f'Matched: {len(payload.get(\"matches\") or [])} stocks')
+          print()
+          print(format_scan_report(payload))
           "
