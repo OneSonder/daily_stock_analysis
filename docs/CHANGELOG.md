@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI Signal Scan 取消邮件通知（删除邮箱 secrets，Actions 改为仅扫描并输出报告），定时改为每个交易日香港时间 16:30（UTC 08:30）。
 - [修复] HSI Signal Scan Actions 改为安装完整 `requirements.txt`，避免通知链路因 `tenacity`/`fake_useragent` 等缺失依赖发送失败。
 - [修复] HSI Signal Scan Actions 补装 `tenacity`/`requests`/`markdown2`，并通过 job `env` 注入邮件等通知 secrets，修复通知失败 `No module named 'tenacity'` 且日志可打印完整扫描报告。
 - [改进] HSI Signal Scan GitHub Actions 改为每个交易日仅运行一次（香港时间 09:00 / UTC 01:00），默认 `3mo` + `s1_breakout,s2_breakout`，并固定 `actions/checkout` 到 `mine` 分支；停用每日股票分析工作流的定时触发，仅保留手动运行。

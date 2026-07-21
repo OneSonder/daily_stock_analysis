@@ -2,8 +2,8 @@ name: HSI Signal Scan
 
 on:
   schedule:
-    # Once daily at 09:00 HKT (UTC 01:00), Mon-Fri
-    - cron: '0 1 * * 1-5'
+    # Once daily at 16:30 HKT (UTC 08:30), Mon-Fri
+    - cron: '30 8 * * 1-5'
   workflow_dispatch:
     inputs:
       period:
@@ -26,7 +26,7 @@ env:
 jobs:
   hsi-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -38,37 +38,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          # Full requirements: NotificationService imports pull data_provider package init.
-          pip install -r requirements.txt
+          pip install yfinance pandas numpy python-dotenv exchange-calendars
 
       - name: Run HSI scan
         id: scan
-        env:
-          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          EMAIL_SENDER: ${{ vars.EMAIL_SENDER || secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVERS: ${{ vars.EMAIL_RECEIVERS || secrets.EMAIL_RECEIVERS }}
-          EMAIL_SENDER_NAME: ${{ vars.EMAIL_SENDER_NAME || secrets.EMAIL_SENDER_NAME || 'daily_stock_analysis股票分析助手' }}
-          EMAIL_SMTP_HOST: ${{ vars.EMAIL_SMTP_HOST || secrets.EMAIL_SMTP_HOST }}
-          EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT || secrets.EMAIL_SMTP_PORT }}
         run: |
           python -c "
           import os, sys, json
           sys.path.insert(0, '.')
-          from src.services.hsi_scanner import scan_hsi_and_notify, format_scan_report
+          from src.services.hsi_scanner import scan_hsi, format_scan_report
 
-          payload = scan_hsi_and_notify(
+          payload = scan_hsi(
               period=os.getenv('HSI_SCAN_PERIOD', '3mo'),
               conditions=os.getenv('HSI_SCAN_CONDITIONS', 's1_breakout,s2_breakout'),
+              check_trading_day=True,
+              use_multi_source=False,
           )
 
           print(json.dumps(payload['stats'], indent=2))
