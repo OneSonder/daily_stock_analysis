@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] HSI lite 增强优先使用腾讯财经 ifzq 按代码拉取实时个股新闻（支持港股 `hkXXXX` 与 A 股 `sh/sz` 映射），SearchService 作为补充/回退。
 - [改进] HSI lite 增强改为默认走 yfinance（扫描 `use_multi_source=False`，行情用 `YfinanceFetcher`），避免港股 AkShare `RemoteDisconnected` 拖垮流程。
 - [新功能] HSI 扫描支持 Top-N（默认 5）lite 增强：多数据源实时行情 + 实时新闻 + LLM 决策仪表盘，输出 `reports/hsi_enriched_*.md`；Actions 上传产物，API `/hsi/scan?enrich=true` 可触发。
 - [改进] HSI Signal Scan 取消邮件通知（删除邮箱 secrets，Actions 改为仅扫描并输出报告），定时改为每个交易日香港时间 16:30（UTC 08:30）。

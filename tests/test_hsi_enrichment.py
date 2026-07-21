@@ -86,10 +86,84 @@ def test_enrich_match_partial_failure_resilience():
     analyzer.is_available = MagicMock(return_value=True)
     analyzer.analyze.side_effect = RuntimeError("llm down")
 
-    result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+    with patch(
+        "src.services.tencent_stock_news.fetch_tencent_stock_news",
+        return_value=[],
+    ), patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=True,
+    ):
+        result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
     assert result["quote_error"] == "quote down"
     assert "腾讯新闻" in result["news_text"]
+    assert result["news_provider"] == "search"
     assert result["analysis_error"] == "llm down"
+
+
+def test_enrich_match_prefers_tencent_ifzq_news():
+    match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
+    fetcher = MagicMock()
+    fetcher.get_realtime_quote.return_value = None
+    search = MagicMock()
+    search.is_available = True
+    search.search_stock_news.return_value = SimpleNamespace(
+        success=True,
+        results=[],
+        to_context=lambda max_results=5: "- 搜索新闻",
+    )
+    analyzer = MagicMock()
+    analyzer.is_available = MagicMock(return_value=False)
+
+    ifzq_items = [
+        {
+            "title": "腾讯营收领先",
+            "snippet": "腾讯营收领先",
+            "url": "https://gu.qq.com/x",
+            "source": "智研咨询",
+            "published_date": "2026-07-21 13:46:12",
+            "provider": "tencent_ifzq",
+            "symbol": "hk00700",
+        }
+    ]
+    with patch(
+        "src.services.tencent_stock_news.fetch_tencent_stock_news",
+        return_value=ifzq_items,
+    ), patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=True,
+    ):
+        result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+
+    assert "腾讯营收领先" in result["news_text"]
+    assert result["news_error"] is None
+    assert result["news_provider"] in {"tencent_ifzq", "tencent_ifzq+search"}
+
+
+def test_enrich_match_falls_back_to_search_when_ifzq_empty():
+    match = {"code": "0700.HK", "name": "腾讯", "close": 400}
+    fetcher = MagicMock()
+    fetcher.get_realtime_quote.return_value = None
+    search = MagicMock()
+    search.is_available = True
+    search.search_stock_news.return_value = SimpleNamespace(
+        success=True,
+        results=[SimpleNamespace(title="备用新闻", snippet="s", published_date="2026-07-20")],
+        to_context=lambda max_results=5: "- 备用新闻 [2026-07-20]",
+    )
+    analyzer = MagicMock()
+    analyzer.is_available = MagicMock(return_value=False)
+
+    with patch(
+        "src.services.tencent_stock_news.fetch_tencent_stock_news",
+        return_value=[],
+    ), patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=True,
+    ):
+        result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+
+    assert "备用新闻" in result["news_text"]
+    assert result["news_provider"] == "search"
 
 
 def test_build_enriched_report_contains_section_headings():
@@ -195,17 +269,24 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
     analyzer = MagicMock()
     analyzer.is_available = MagicMock(return_value=False)
 
-    result = run_hsi_scan_enriched(
-        period="3mo",
-        conditions="s1_breakout",
-        check_trading_day=False,
-        top_n=1,
-        fetcher=fetcher,
-        search=search,
-        analyzer=analyzer,
-        reports_dir=tmp_path,
-        save_report=True,
-    )
+    with patch(
+        "src.services.tencent_stock_news.fetch_tencent_stock_news",
+        return_value=[],
+    ), patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=False,
+    ):
+        result = run_hsi_scan_enriched(
+            period="3mo",
+            conditions="s1_breakout",
+            check_trading_day=False,
+            top_n=1,
+            fetcher=fetcher,
+            search=search,
+            analyzer=analyzer,
+            reports_dir=tmp_path,
+            save_report=True,
+        )
     assert result["top_n"] == 1
     assert len(result["enrichments"]) == 1
     assert result["enrichments"][0]["code"] == "0700.HK"

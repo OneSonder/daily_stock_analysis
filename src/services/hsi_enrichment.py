@@ -279,6 +279,7 @@ def enrich_match(
         "quote_error": None,
         "news_text": "",
         "news_error": None,
+        "news_provider": None,
         "analysis": None,
         "analysis_error": None,
     }
@@ -298,21 +299,59 @@ def enrich_match(
         result["quote_error"] = "fetcher unavailable"
 
     news_text = ""
+    news_provider: Optional[str] = None
+    search_text = ""
+    search_error: Optional[str] = None
+
+    # Prefer Tencent ifzq live symbol news (no API key); soft-fail if empty/disabled.
+    try:
+        from src.services.tencent_stock_news import (
+            fetch_tencent_stock_news,
+            format_tencent_news_context,
+            is_tencent_stock_news_enabled,
+            merge_news_contexts,
+        )
+
+        if is_tencent_stock_news_enabled():
+            ifzq_items = fetch_tencent_stock_news(code, n=10)
+            if ifzq_items:
+                news_text = format_tencent_news_context(ifzq_items, max_items=10)
+                news_provider = "tencent_ifzq"
+                result["news_text"] = news_text
+                result["news_provider"] = news_provider
+    except Exception as exc:
+        logger.warning("HSI enrich tencent ifzq news failed for %s: %s", code, exc)
+
     if search is not None and _service_available(search):
         try:
             response = search.search_stock_news(code, name, max_results=5)
             if getattr(response, "success", False):
-                news_text = _format_news_context(response)
-                result["news_text"] = news_text
+                search_text = _format_news_context(response)
             else:
-                result["news_error"] = getattr(response, "error_message", None) or "search failed"
+                search_error = getattr(response, "error_message", None) or "search failed"
         except Exception as exc:
-            result["news_error"] = str(exc)
+            search_error = str(exc)
             logger.warning("HSI enrich news failed for %s: %s", code, exc)
     elif search is None:
-        result["news_error"] = "search service unavailable"
+        search_error = "search service unavailable"
     else:
-        result["news_error"] = "no search providers configured"
+        search_error = "no search providers configured"
+
+    if news_text and search_text:
+        news_text = merge_news_contexts(news_text, search_text, max_secondary_lines=2)
+        result["news_text"] = news_text
+        result["news_provider"] = f"{news_provider}+search" if news_provider else "search"
+        result["news_error"] = None
+    elif news_text:
+        result["news_error"] = None
+    elif search_text:
+        news_text = search_text
+        result["news_text"] = news_text
+        result["news_provider"] = "search"
+        result["news_error"] = None
+    else:
+        result["news_text"] = ""
+        result["news_error"] = search_error or "no news results"
 
     if analyzer is not None and _service_available(analyzer, default=True):
         try:
