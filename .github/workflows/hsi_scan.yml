@@ -2,8 +2,8 @@ name: HSI Signal Scan
 
 on:
   schedule:
-    # Once daily at 16:30 HKT (UTC 08:30), Mon-Fri
-    - cron: '30 8 * * 1-5'
+    # Once daily at 16:00 HKT (UTC 08:00), Mon-Fri
+    - cron: '0 8 * * 1-5'
   workflow_dispatch:
     inputs:
       period:
