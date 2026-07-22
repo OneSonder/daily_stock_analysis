@@ -1,8 +1,8 @@
 name: Network Smoke
 
+# Disabled: public/network smoke was noisy (e.g. SearXNG 429) and is non-blocking.
+# Re-enable by restoring the schedule below and removing `if: false` on the job.
 on:
-  schedule:
-    - cron: '0 2 * * 1-5'
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   smoke:
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
