@@ -247,8 +247,10 @@ def test_build_enriched_report_contains_section_headings():
     assert "技术指标与形态" in report
     assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
     assert "实时新闻" in report
-    assert "LLM决策仪表盘" in report
-    assert "Kimi 点评" in report
+    assert "DeepSeek 决策仪表盘" in report
+    assert "来源: **DeepSeek**" in report
+    assert "Kimi 独立点评" in report
+    assert "来源: **Kimi / Moonshot**" in report
     assert "短线关注回踩支撑" in report
     assert "腾讯" in report
     assert "401" in report
@@ -272,9 +274,28 @@ def test_format_technical_section_renders_indicators():
 def test_format_sections_with_errors():
     assert "行情获取失败" in format_quote_section(None, "boom")
     assert "新闻检索失败" in format_news_section("", "boom")
-    assert "LLM 分析失败" in format_dashboard_section(None, "boom")
+    assert "[DeepSeek] 分析失败" in format_dashboard_section(None, "boom")
     assert "无技术指标" in format_technical_section({})
-    assert "Kimi 点评不可用" in format_kimi_comment_section("", "boom")
+    assert "[Kimi] 点评不可用" in format_kimi_comment_section("", "boom")
+    labeled = format_kimi_comment_section("观点偏多")
+    assert "Kimi 独立点评" in labeled
+    assert "[Kimi]" in labeled
+    assert "来源: **Kimi / Moonshot**" in labeled
+    deep = format_dashboard_section(
+        SimpleNamespace(
+            success=True,
+            sentiment_score=70,
+            operation_advice="买入",
+            trend_prediction="看多",
+            confidence_level="中",
+            analysis_summary="突破",
+            risk_warning="",
+            news_summary="",
+            dashboard={},
+        )
+    )
+    assert "[DeepSeek] 综合评分: 70" in deep
+    assert "来源: **DeepSeek**" in deep
 
 
 def test_enrich_match_adds_kimi_comment():

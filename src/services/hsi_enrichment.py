@@ -265,20 +265,25 @@ def format_news_section(news_text: str, error: Optional[str] = None) -> str:
 
 
 def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
-    lines = ["### LLM决策仪表盘", ""]
+    lines = [
+        "### DeepSeek 决策仪表盘",
+        "",
+        "> 来源: **DeepSeek**（主分析 LLM / 结构化决策仪表盘）",
+        "",
+    ]
     if error:
-        lines.append(f"- LLM 分析失败: {error}")
+        lines.append(f"- [DeepSeek] 分析失败: {error}")
         lines.append("")
         return "\n".join(lines)
     if analysis is None:
-        lines.append("- 未生成决策仪表盘")
+        lines.append("- [DeepSeek] 未生成决策仪表盘")
         lines.append("")
         return "\n".join(lines)
 
     success = getattr(analysis, "success", True)
     if success is False:
         err = getattr(analysis, "error_message", None) or "unknown"
-        lines.append(f"- LLM 分析不可用: {err}")
+        lines.append(f"- [DeepSeek] 分析不可用: {err}")
         lines.append("")
         return "\n".join(lines)
 
@@ -290,16 +295,16 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
     risk = getattr(analysis, "risk_warning", None) or ""
     news_summary = getattr(analysis, "news_summary", None) or ""
 
-    lines.append(f"- 综合评分: {score}")
-    lines.append(f"- 操作建议: {advice}")
-    lines.append(f"- 趋势预测: {trend}")
-    lines.append(f"- 置信度: {confidence}")
+    lines.append(f"- [DeepSeek] 综合评分: {score}")
+    lines.append(f"- [DeepSeek] 操作建议: {advice}")
+    lines.append(f"- [DeepSeek] 趋势预测: {trend}")
+    lines.append(f"- [DeepSeek] 置信度: {confidence}")
     if summary:
-        lines.append(f"- 摘要: {summary}")
+        lines.append(f"- [DeepSeek] 摘要: {summary}")
     if news_summary:
-        lines.append(f"- 消息面: {news_summary}")
+        lines.append(f"- [DeepSeek] 消息面: {news_summary}")
     if risk:
-        lines.append(f"- 风险提示: {risk}")
+        lines.append(f"- [DeepSeek] 风险提示: {risk}")
 
     dashboard = getattr(analysis, "dashboard", None) or {}
     if isinstance(dashboard, dict) and dashboard:
@@ -308,9 +313,9 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
             one = core.get("one_sentence")
             signal = core.get("signal_type")
             if one:
-                lines.append(f"- 核心结论: {one}")
+                lines.append(f"- [DeepSeek] 核心结论: {one}")
             if signal:
-                lines.append(f"- 信号类型: {signal}")
+                lines.append(f"- [DeepSeek] 信号类型: {signal}")
         battle = dashboard.get("battle_plan") or {}
         if isinstance(battle, dict):
             sniper = battle.get("sniper_points") or {}
@@ -323,12 +328,12 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
                 ):
                     val = sniper.get(key)
                     if val:
-                        lines.append(f"- {label}: {val}")
+                        lines.append(f"- [DeepSeek] {label}: {val}")
         intelligence = dashboard.get("intelligence") or {}
         if isinstance(intelligence, dict):
             alerts = intelligence.get("risk_alerts")
             if alerts:
-                lines.append(f"- 风险警报: {alerts}")
+                lines.append(f"- [DeepSeek] 风险警报: {alerts}")
 
     lines.append("")
     return "\n".join(lines)
@@ -336,16 +341,25 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
 
 def format_kimi_comment_section(comment: str = "", error: Optional[str] = None) -> str:
     """Format separate Kimi commentary block (after DeepSeek dashboard)."""
-    lines = ["### Kimi 点评", ""]
+    lines = [
+        "### Kimi 独立点评",
+        "",
+        "> 来源: **Kimi / Moonshot**（独立点评 LLM，与 DeepSeek 仪表盘分开，互不替代）",
+        "",
+    ]
     text = (comment or "").strip()
     if text:
-        lines.append(text)
+        # Ensure body lines are visibly attributed even if model omits a label.
+        body_lines = text.splitlines()
+        if not any(line.strip().startswith("[Kimi]") for line in body_lines[:3]):
+            lines.append("[Kimi]")
+        lines.extend(body_lines)
         lines.append("")
         return "\n".join(lines)
     if error:
-        lines.append(f"- Kimi 点评不可用: {error}")
+        lines.append(f"- [Kimi] 点评不可用: {error}")
     else:
-        lines.append("- 未生成 Kimi 点评")
+        lines.append("- [Kimi] 未生成点评")
     lines.append("")
     return "\n".join(lines)
 
