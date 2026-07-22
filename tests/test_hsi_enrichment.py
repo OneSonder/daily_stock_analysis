@@ -12,6 +12,7 @@ from src.services.hsi_enrichment import (
     build_lite_context,
     enrich_match,
     format_dashboard_section,
+    format_kimi_comment_section,
     format_news_section,
     format_quote_section,
     format_technical_section,
@@ -103,6 +104,9 @@ def test_enrich_match_partial_failure_resilience():
     ), patch(
         "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
         return_value=True,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=False,
     ):
         result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
     assert result["quote_error"] == "quote down"
@@ -142,6 +146,9 @@ def test_enrich_match_prefers_tencent_ifzq_news():
     ), patch(
         "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
         return_value=True,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=False,
     ):
         result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
 
@@ -170,6 +177,9 @@ def test_enrich_match_falls_back_to_search_when_ifzq_empty():
     ), patch(
         "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
         return_value=True,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=False,
     ):
         result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
 
@@ -228,6 +238,8 @@ def test_build_enriched_report_contains_section_headings():
             "news_error": None,
             "analysis": analysis,
             "analysis_error": None,
+            "kimi_comment": "Kimi：短线关注回踩支撑。",
+            "kimi_comment_error": None,
         }
     ]
     report = build_enriched_report(scan_payload, enrichments, top_n=5)
@@ -236,6 +248,8 @@ def test_build_enriched_report_contains_section_headings():
     assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
     assert "实时新闻" in report
     assert "LLM决策仪表盘" in report
+    assert "Kimi 点评" in report
+    assert "短线关注回踩支撑" in report
     assert "腾讯" in report
     assert "401" in report
 
@@ -260,6 +274,32 @@ def test_format_sections_with_errors():
     assert "新闻检索失败" in format_news_section("", "boom")
     assert "LLM 分析失败" in format_dashboard_section(None, "boom")
     assert "无技术指标" in format_technical_section({})
+    assert "Kimi 点评不可用" in format_kimi_comment_section("", "boom")
+
+
+def test_enrich_match_adds_kimi_comment():
+    match = {"code": "0700.HK", "name": "腾讯", "close": 400}
+    fetcher = MagicMock()
+    fetcher.get_realtime_quote.return_value = None
+    search = MagicMock()
+    search.is_available = False
+    analyzer = MagicMock()
+    analyzer.is_available = MagicMock(return_value=False)
+
+    with patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=False,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=True,
+    ), patch(
+        "src.services.kimi_comment.generate_kimi_comment",
+        return_value="独立点评内容",
+    ):
+        result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+
+    assert result["kimi_comment"] == "独立点评内容"
+    assert result["kimi_comment_error"] is None
 
 
 @patch("src.services.hsi_enrichment.scan_hsi")
@@ -310,6 +350,9 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
         return_value=[],
     ), patch(
         "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=False,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
         return_value=False,
     ):
         result = run_hsi_scan_enriched(

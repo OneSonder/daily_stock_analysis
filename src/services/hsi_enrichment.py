@@ -334,6 +334,22 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
+def format_kimi_comment_section(comment: str = "", error: Optional[str] = None) -> str:
+    """Format separate Kimi commentary block (after DeepSeek dashboard)."""
+    lines = ["### Kimi 点评", ""]
+    text = (comment or "").strip()
+    if text:
+        lines.append(text)
+        lines.append("")
+        return "\n".join(lines)
+    if error:
+        lines.append(f"- Kimi 点评不可用: {error}")
+    else:
+        lines.append("- 未生成 Kimi 点评")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _service_available(obj: Any, default: bool = False) -> bool:
     if obj is None:
         return False
@@ -365,6 +381,8 @@ def enrich_match(
         "news_provider": None,
         "analysis": None,
         "analysis_error": None,
+        "kimi_comment": "",
+        "kimi_comment_error": None,
     }
 
     quote_dict: Optional[Dict[str, Any]] = None
@@ -436,6 +454,7 @@ def enrich_match(
         result["news_text"] = ""
         result["news_error"] = search_error or "no news results"
 
+    context: Optional[Dict[str, Any]] = None
     if analyzer is not None and _service_available(analyzer, default=True):
         try:
             context = build_lite_context(match, quote_dict)
@@ -450,6 +469,25 @@ def enrich_match(
         result["analysis_error"] = "analyzer unavailable"
     else:
         result["analysis_error"] = "LLM not configured"
+
+    # Separate Kimi commentary (does not replace DeepSeek dashboard).
+    try:
+        from src.services.kimi_comment import generate_kimi_comment, is_kimi_comment_enabled
+
+        if is_kimi_comment_enabled():
+            if context is None:
+                context = build_lite_context(match, quote_dict)
+            comment = generate_kimi_comment(context, news_text or "")
+            if comment:
+                result["kimi_comment"] = comment
+                result["kimi_comment_error"] = None
+            else:
+                result["kimi_comment_error"] = "empty or failed Kimi comment"
+        else:
+            result["kimi_comment_error"] = "kimi comment disabled or no API key"
+    except Exception as exc:
+        result["kimi_comment_error"] = str(exc)
+        logger.warning("HSI enrich Kimi comment failed for %s: %s", code, exc)
 
     return result
 
@@ -483,6 +521,12 @@ def build_enriched_report(
         parts.append(format_technical_section(match))
         parts.append(format_news_section(item.get("news_text") or "", item.get("news_error")))
         parts.append(format_dashboard_section(item.get("analysis"), item.get("analysis_error")))
+        parts.append(
+            format_kimi_comment_section(
+                item.get("kimi_comment") or "",
+                item.get("kimi_comment_error"),
+            )
+        )
 
     return "\n".join(parts).rstrip() + "\n"
 
