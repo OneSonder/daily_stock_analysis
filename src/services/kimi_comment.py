@@ -13,8 +13,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
-DEFAULT_MODEL = "kimi-k2.5"
-DEFAULT_TEMPERATURE = 0.6
+DEFAULT_MODEL = "kimi-k2.6"
+# Moonshot Kimi k2.5/k2.6 family requires temperature=1 (thinking-default).
+DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TIMEOUT = 60.0
 
 _COMMENT_SYSTEM = (
@@ -104,7 +105,16 @@ def generate_kimi_comment(
     http = session or requests
     try:
         resp = http.post(url, headers=headers, json=body, timeout=timeout)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface API error body (no secrets) for Actions debugging.
+            detail = (resp.text or "").strip()[:400]
+            logger.warning(
+                "Kimi comment request failed: %s %s body=%s",
+                resp.status_code,
+                resp.reason,
+                detail,
+            )
+            return ""
         data = resp.json()
     except Exception as exc:
         logger.warning("Kimi comment request failed: %s", exc)
