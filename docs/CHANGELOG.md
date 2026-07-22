@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] SearXNG 代码保留；公共实例默认关闭（`SEARXNG_PUBLIC_INSTANCES_ENABLED=false`），避免公共节点 429；自建 `SEARXNG_BASE_URLS` 仍可用。
 - [修复] HSI Kimi 点评关闭 thinking（`temperature=0.6`）并提高超时到 180s，避免 Actions 上 60s 读超时导致「empty or failed」。
 - [修复] HSI Kimi 点评改为 `kimi-k2.6` + `temperature=1.0`，并记录 API 错误正文，修复 Moonshot 400 `invalid temperature` 导致点评为空。
 - [改进] HSI 增强报告明确标注观点来源：DeepSeek 决策仪表盘条目加 `[DeepSeek]`，Kimi 独立点评加来源说明与 `[Kimi]`。
