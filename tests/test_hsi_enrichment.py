@@ -14,6 +14,7 @@ from src.services.hsi_enrichment import (
     format_dashboard_section,
     format_news_section,
     format_quote_section,
+    format_technical_section,
     resolve_enrich_top_n,
     run_hsi_scan_enriched,
     select_top_matches,
@@ -52,6 +53,12 @@ def test_build_lite_context_uses_quote_and_signals():
         "s2_breakout": False,
         "potential_score": 82,
         "potential_tier": "A",
+        "ma20": 395.0,
+        "rsi_12": 58.2,
+        "macd_dif": 1.2,
+        "macd_status": "bullish",
+        "kline_patterns": ["hammer"],
+        "double_top": False,
     }
     quote = {"price": 401.5, "change_pct": 1.2, "source": "akshare"}
     ctx = build_lite_context(match, quote)
@@ -60,6 +67,10 @@ def test_build_lite_context_uses_quote_and_signals():
     assert ctx["realtime"]["price"] == 401.5
     assert ctx["today"]["pct_chg"] == 1.2
     assert ctx["hsi_signals"]["s1_breakout"] is True
+    assert ctx["technicals"]["ma20"] == 395.0
+    assert ctx["technicals"]["rsi_12"] == 58.2
+    assert ctx["patterns"]["kline_patterns"] == ["hammer"]
+    assert "RSI/MACD/MAs" in ctx["analysis_notes"]
 
 
 def test_enrich_match_partial_failure_resilience():
@@ -203,7 +214,14 @@ def test_build_enriched_report_contains_section_headings():
         {
             "code": "0700.HK",
             "name": "腾讯",
-            "match": scan_payload["matches"][0],
+            "match": {
+                **scan_payload["matches"][0],
+                "ma20": 395.0,
+                "rsi_12": 55.0,
+                "macd_dif": 0.5,
+                "macd_status": "bullish",
+                "kline_patterns": ["hammer"],
+            },
             "quote": {"price": 401, "source": "akshare", "change_pct": 1.1},
             "quote_error": None,
             "news_text": "- 腾讯相关新闻",
@@ -214,16 +232,34 @@ def test_build_enriched_report_contains_section_headings():
     ]
     report = build_enriched_report(scan_payload, enrichments, top_n=5)
     assert "多数据源行情" in report
+    assert "技术指标与形态" in report
+    assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
     assert "实时新闻" in report
     assert "LLM决策仪表盘" in report
     assert "腾讯" in report
     assert "401" in report
 
 
+def test_format_technical_section_renders_indicators():
+    text = format_technical_section(
+        {
+            "ma20": 100.0,
+            "rsi_12": 45.0,
+            "macd_dif": 0.1,
+            "macd_status": "bullish",
+            "kline_patterns": ["double_top"],
+        }
+    )
+    assert "技术指标与形态" in text
+    assert "MA20=100.0" in text
+    assert "double_top" in text
+
+
 def test_format_sections_with_errors():
     assert "行情获取失败" in format_quote_section(None, "boom")
     assert "新闻检索失败" in format_news_section("", "boom")
     assert "LLM 分析失败" in format_dashboard_section(None, "boom")
+    assert "无技术指标" in format_technical_section({})
 
 
 @patch("src.services.hsi_enrichment.scan_hsi")

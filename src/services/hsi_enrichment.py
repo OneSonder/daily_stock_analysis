@@ -117,6 +117,40 @@ def build_lite_context(
         "kline_patterns": match.get("kline_patterns"),
     }
 
+    technicals = {
+        "ma5": match.get("ma5"),
+        "ma10": match.get("ma10"),
+        "ma20": match.get("ma20"),
+        "ma60": match.get("ma60"),
+        "ma_alignment": match.get("ma_alignment"),
+        "trend_status": match.get("trend_status"),
+        "trend_strength": match.get("trend_strength"),
+        "bias_ma5": match.get("bias_ma5"),
+        "macd_dif": match.get("macd_dif"),
+        "macd_dea": match.get("macd_dea"),
+        "macd_bar": match.get("macd_bar"),
+        "macd_status": match.get("macd_status"),
+        "macd_signal": match.get("macd_signal"),
+        "rsi_6": match.get("rsi_6"),
+        "rsi_12": match.get("rsi_12"),
+        "rsi_24": match.get("rsi_24"),
+        "rsi_status": match.get("rsi_status"),
+        "rsi_signal": match.get("rsi_signal"),
+    }
+
+    patterns = {
+        "kline_patterns": match.get("kline_patterns") or [],
+        "kline_bullish_patterns": match.get("kline_bullish_patterns") or [],
+        "kline_bearish_patterns": match.get("kline_bearish_patterns") or [],
+        "double_top": match.get("double_top"),
+        "double_bottom": match.get("double_bottom"),
+        "head_shoulders": match.get("head_shoulders"),
+        "inverse_head_shoulders": match.get("inverse_head_shoulders"),
+        "triangle_breakout": match.get("triangle_breakout"),
+        "bull_flag": match.get("bull_flag"),
+        "bear_flag": match.get("bear_flag"),
+    }
+
     return {
         "code": code,
         "stock_name": name,
@@ -126,9 +160,11 @@ def build_lite_context(
         "yesterday": {},
         "realtime": quote,
         "hsi_signals": hsi_signals,
+        "technicals": technicals,
+        "patterns": patterns,
         "analysis_notes": (
-            "HSI lite enrichment context: S1/S2 scan signals + multi-source realtime quote. "
-            f"Signals={hsi_signals}"
+            "HSI lite enrichment: S1/S2 signals + RSI/MACD/MAs + chart patterns + realtime quote. "
+            f"Signals={hsi_signals}; Technicals={technicals}; Patterns={patterns}"
         ),
     }
 
@@ -161,6 +197,53 @@ def format_quote_section(quote: Optional[Dict[str, Any]], error: Optional[str] =
         val = quote.get(key)
         if val is not None:
             lines.append(f"- {label}: {val}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_technical_section(match: Optional[Dict[str, Any]] = None) -> str:
+    """Format MA / RSI / MACD / chart-pattern block for enriched reports."""
+    lines = ["### 技术指标与形态", ""]
+    match = match or {}
+    has_tech = any(match.get(k) is not None for k in ("ma20", "rsi_12", "macd_dif", "ma_alignment"))
+    patterns = match.get("kline_patterns") or []
+    if not has_tech and not patterns:
+        lines.append("- 无技术指标/形态数据")
+        lines.append("")
+        return "\n".join(lines)
+
+    if match.get("ma_alignment") or match.get("trend_status"):
+        lines.append(
+            f"- 趋势: {match.get('ma_alignment') or match.get('trend_status')}"
+            + (f" (strength={match.get('trend_strength')})" if match.get("trend_strength") is not None else "")
+        )
+    ma_bits = []
+    for key in ("ma5", "ma10", "ma20", "ma60"):
+        if match.get(key) is not None:
+            ma_bits.append(f"{key.upper()}={match.get(key)}")
+    if ma_bits:
+        lines.append(f"- 均线: {', '.join(ma_bits)}")
+    if match.get("bias_ma5") is not None:
+        lines.append(f"- 乖离率 MA5: {match.get('bias_ma5')}%")
+    if any(match.get(k) is not None for k in ("rsi_6", "rsi_12", "rsi_24")):
+        lines.append(
+            f"- RSI: 6={match.get('rsi_6', 'n/a')}, 12={match.get('rsi_12', 'n/a')}, "
+            f"24={match.get('rsi_24', 'n/a')} ({match.get('rsi_status') or 'n/a'})"
+        )
+        if match.get("rsi_signal"):
+            lines.append(f"  - {match.get('rsi_signal')}")
+    if any(match.get(k) is not None for k in ("macd_dif", "macd_dea", "macd_bar")):
+        lines.append(
+            f"- MACD: status={match.get('macd_status') or 'n/a'}, "
+            f"DIF={match.get('macd_dif', 'n/a')}, DEA={match.get('macd_dea', 'n/a')}, "
+            f"BAR={match.get('macd_bar', 'n/a')}"
+        )
+        if match.get("macd_signal"):
+            lines.append(f"  - {match.get('macd_signal')}")
+    if patterns:
+        lines.append(f"- 形态: {', '.join(patterns)}")
+    else:
+        lines.append("- 形态: 无")
     lines.append("")
     return "\n".join(lines)
 
@@ -397,6 +480,7 @@ def build_enriched_report(
         parts.append(f"- potential_score: {score} | tier: {tier}")
         parts.append("")
         parts.append(format_quote_section(item.get("quote"), item.get("quote_error")))
+        parts.append(format_technical_section(match))
         parts.append(format_news_section(item.get("news_text") or "", item.get("news_error")))
         parts.append(format_dashboard_section(item.get("analysis"), item.get("analysis_error")))
 

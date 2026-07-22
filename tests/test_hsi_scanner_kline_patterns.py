@@ -102,6 +102,18 @@ class TestHSIScannerKlinePatterns(unittest.TestCase):
         self.assertFalse(out["kline_bullish"])
         self.assertFalse(out["kline_bearish"])
 
+    def test_attaches_rsi_macd_and_mas(self):
+        df = _build_base_df(length=90, start=100.0, step=0.2)
+        df["Volume"] = 1_000_000
+        out = compute_signals_full(df)
+        self.assertIsNotNone(out.get("ma20"))
+        self.assertIsNotNone(out.get("rsi_12"))
+        self.assertIsNotNone(out.get("macd_dif"))
+        self.assertTrue(np.isfinite(out["ma20"]))
+        self.assertTrue(np.isfinite(out["rsi_12"]))
+        self.assertTrue(np.isfinite(out["macd_dif"]))
+        self.assertIn("kline_patterns", out)
+
 
 if __name__ == "__main__":
     unittest.main()

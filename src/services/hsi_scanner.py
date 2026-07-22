@@ -419,6 +419,81 @@ def _kline_pattern_summary(flags: Dict[str, bool], triangle_direction: Optional[
     return all_patterns, bullish_patterns, bearish_patterns, pattern_score
 
 
+def _ohlcv_for_trend_analyzer(work: pd.DataFrame) -> pd.DataFrame:
+    """Build lowercase OHLCV frame expected by StockTrendAnalyzer."""
+    dates = pd.to_datetime(work.index, errors='coerce')
+    frame = pd.DataFrame(
+        {
+            'date': dates,
+            'open': pd.to_numeric(work['Open'], errors='coerce'),
+            'high': pd.to_numeric(work['High'], errors='coerce'),
+            'low': pd.to_numeric(work['Low'], errors='coerce'),
+            'close': pd.to_numeric(work['Close'], errors='coerce'),
+        }
+    )
+    if 'Volume' in work.columns:
+        frame['volume'] = pd.to_numeric(work['Volume'], errors='coerce').fillna(0.0)
+    else:
+        frame['volume'] = 0.0
+    return frame.dropna(subset=['date', 'close']).reset_index(drop=True)
+
+
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, 'value') else value
+
+
+def _technicals_from_trend(result: Any) -> Dict[str, Any]:
+    """Extract MA / MACD / RSI fields from TrendAnalysisResult."""
+    if result is None:
+        return {}
+
+    def _round(val: Any, digits: int = 2) -> Optional[float]:
+        try:
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                return None
+            return round(float(val), digits)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        'ma5': _round(getattr(result, 'ma5', None)),
+        'ma10': _round(getattr(result, 'ma10', None)),
+        'ma20': _round(getattr(result, 'ma20', None)),
+        'ma60': _round(getattr(result, 'ma60', None)),
+        'ma_alignment': getattr(result, 'ma_alignment', None) or '',
+        'trend_status': _enum_value(getattr(result, 'trend_status', None)),
+        'trend_strength': _round(getattr(result, 'trend_strength', None)),
+        'bias_ma5': _round(getattr(result, 'bias_ma5', None)),
+        'bias_ma10': _round(getattr(result, 'bias_ma10', None)),
+        'bias_ma20': _round(getattr(result, 'bias_ma20', None)),
+        'macd_dif': _round(getattr(result, 'macd_dif', None), 4),
+        'macd_dea': _round(getattr(result, 'macd_dea', None), 4),
+        'macd_bar': _round(getattr(result, 'macd_bar', None), 4),
+        'macd_status': _enum_value(getattr(result, 'macd_status', None)),
+        'macd_signal': getattr(result, 'macd_signal', None) or '',
+        'rsi_6': _round(getattr(result, 'rsi_6', None)),
+        'rsi_12': _round(getattr(result, 'rsi_12', None)),
+        'rsi_24': _round(getattr(result, 'rsi_24', None)),
+        'rsi_status': _enum_value(getattr(result, 'rsi_status', None)),
+        'rsi_signal': getattr(result, 'rsi_signal', None) or '',
+    }
+
+
+def _attach_trend_technicals(work: pd.DataFrame) -> Dict[str, Any]:
+    """Soft-fail wrapper: RSI/MACD/MAs via StockTrendAnalyzer."""
+    try:
+        from src.stock_analyzer import StockTrendAnalyzer
+
+        analyzer_df = _ohlcv_for_trend_analyzer(work)
+        if analyzer_df.empty or len(analyzer_df) < 20:
+            return {}
+        trend = StockTrendAnalyzer().analyze(analyzer_df, code='hsi')
+        return _technicals_from_trend(trend)
+    except Exception as exc:
+        logger.warning('HSI trend technicals failed: %s', exc)
+        return {}
+
+
 def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     df = _normalize_columns(df)
     needed = {'High', 'Low', 'Close'}
@@ -434,7 +509,10 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     work = df.copy()
     if 'Open' not in work.columns:
         work['Open'] = work['Close'].shift(1).fillna(work['Close'])
-    work = work[['Open', 'High', 'Low', 'Close']].copy()
+    cols = ['Open', 'High', 'Low', 'Close']
+    if 'Volume' in work.columns:
+        cols.append('Volume')
+    work = work[cols].copy()
 
     entry20 = work['High'].rolling(window=20).max()
     entry55 = work['High'].rolling(window=55).max()
@@ -510,6 +588,8 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     except Exception:
         date_iso = str(last_date)
 
+    technicals = _attach_trend_technicals(work)
+
     return {
         'date': date_iso,
         'close': round(float(work['Close'].iloc[-1]), 2),
@@ -552,6 +632,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'kline_bearish': bool(len(kline_bearish_patterns) > 0),
         'potential_score': round(potential_score, 2),
         'potential_tier': potential_tier,
+        **technicals,
     }
 
 
@@ -960,7 +1041,7 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     stats = payload.get('stats', {})
 
     if payload.get('skipped'):
-        return f"# HSI Signal Scan Skipped\n\n{padding.get('skip_reason', 'Market closed')}"
+        return f"# HSI Signal Scan Skipped\n\n{payload.get('skip_reason', 'Market closed')}"
 
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
     lines.append(f"# HSI Signal Scan — {stats.get('tickers', '?')} tickers in {stats.get('total_ms', '?')}ms")
@@ -979,13 +1060,42 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
                 f"| {'✅' if m['close_vs_s2_entry'] else '❌'} |"
             )
         lines.append("")
+        lines.append("### Technicals & patterns\n")
+        for m in matches:
+            code = m.get('code', '')
+            name = m.get('name', '')
+            ma_bits = []
+            for key in ('ma5', 'ma10', 'ma20', 'ma60'):
+                val = m.get(key)
+                if val is not None:
+                    ma_bits.append(f"{key.upper()}={val}")
+            ma_line = ', '.join(ma_bits) if ma_bits else 'MA n/a'
+            alignment = m.get('ma_alignment') or m.get('trend_status') or 'n/a'
+            rsi_line = (
+                f"RSI6={m.get('rsi_6', 'n/a')}, RSI12={m.get('rsi_12', 'n/a')}"
+                f" ({m.get('rsi_status') or 'n/a'})"
+            )
+            macd_line = (
+                f"MACD={m.get('macd_status') or 'n/a'}"
+                f" DIF={m.get('macd_dif', 'n/a')} DEA={m.get('macd_dea', 'n/a')}"
+            )
+            if m.get('macd_signal'):
+                macd_line += f" — {m.get('macd_signal')}"
+            patterns = m.get('kline_patterns') or []
+            pattern_text = ', '.join(patterns) if patterns else '无'
+            lines.append(f"- **{name} ({code})**: {alignment}")
+            lines.append(f"  - {ma_line}")
+            lines.append(f"  - {rsi_line}")
+            lines.append(f"  - {macd_line}")
+            lines.append(f"  - Patterns: {pattern_text}")
+        lines.append("")
     else:
         lines.append("No stocks matched the selected conditions.\n")
 
     if no_price:
         lines.append(f"### Tickers with no price data ({len(no_price)})\n")
-        for np in no_price:
-            lines.append(f"- {np['code']} ({np['name']}): {np['message']}")
+        for np_item in no_price:
+            lines.append(f"- {np_item['code']} ({np_item['name']}): {np_item['message']}")
         lines.append("")
 
     return "\n".join(lines)
