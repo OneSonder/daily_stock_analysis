@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
 DEFAULT_MODEL = "kimi-k2.6"
-# Moonshot Kimi k2.5/k2.6 family requires temperature=1 (thinking-default).
-DEFAULT_TEMPERATURE = 1.0
-DEFAULT_TIMEOUT = 60.0
+# Moonshot Kimi k2.6 thinking-default requires temperature=1; non-thinking uses 0.6.
+DEFAULT_TEMPERATURE = 0.6
+DEFAULT_TIMEOUT = 180.0
+DEFAULT_MAX_TOKENS = 800
 
 _COMMENT_SYSTEM = (
     "你是港股交易点评助手（模型标识：Kimi/Moonshot）。"
@@ -93,12 +94,16 @@ def generate_kimi_comment(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    user_prompt = _build_user_prompt(context or {}, news_text or "")
     body = {
         "model": model,
         "temperature": DEFAULT_TEMPERATURE,
+        "max_tokens": DEFAULT_MAX_TOKENS,
+        # Disable thinking so Actions finishes well under timeout (thinking often ~60s+).
+        "thinking": {"type": "disabled"},
         "messages": [
             {"role": "system", "content": _COMMENT_SYSTEM},
-            {"role": "user", "content": _build_user_prompt(context or {}, news_text or "")},
+            {"role": "user", "content": user_prompt},
         ],
     }
 
@@ -106,7 +111,6 @@ def generate_kimi_comment(
     try:
         resp = http.post(url, headers=headers, json=body, timeout=timeout)
         if resp.status_code >= 400:
-            # Surface API error body (no secrets) for Actions debugging.
             detail = (resp.text or "").strip()[:400]
             logger.warning(
                 "Kimi comment request failed: %s %s body=%s",

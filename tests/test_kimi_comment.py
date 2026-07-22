@@ -51,8 +51,9 @@ def test_generate_kimi_comment_success(monkeypatch):
     called_url = session.post.call_args[0][0]
     assert called_url.endswith("/chat/completions")
     kwargs = session.post.call_args.kwargs
-    assert kwargs["json"]["temperature"] == 1.0
+    assert kwargs["json"]["temperature"] == 0.6
     assert kwargs["json"]["model"] == "kimi-k2.6"
+    assert kwargs["json"]["thinking"] == {"type": "disabled"}
 
 
 def test_generate_kimi_comment_soft_fails(monkeypatch):
