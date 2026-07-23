@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI Kimi 点评默认模型改为 `kimi-k3`（`reasoning_effort=low`，省略固定 temperature），不再使用 k2.6 的 `thinking.disabled`。
 - [chore] 禁用 GitHub Actions `Network Smoke` 定时任务（workflow 保留，job `if: false`）。
 - [改进] SearXNG 代码保留；公共实例默认关闭（`SEARXNG_PUBLIC_INSTANCES_ENABLED=false`），避免公共节点 429；自建 `SEARXNG_BASE_URLS` 仍可用。
 - [修复] HSI Kimi 点评关闭 thinking（`temperature=0.6`）并提高超时到 180s，避免 Actions 上 60s 读超时导致「empty or failed」。

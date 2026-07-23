@@ -13,9 +13,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
-DEFAULT_MODEL = "kimi-k2.6"
-# Moonshot Kimi k2.6 thinking-default requires temperature=1; non-thinking uses 0.6.
-DEFAULT_TEMPERATURE = 0.6
+DEFAULT_MODEL = "kimi-k3"
+# K3 always thinks; use low effort so Actions stays under timeout. Temperature is fixed at 1.0 — omit it.
+DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_TIMEOUT = 180.0
 DEFAULT_MAX_TOKENS = 800
 
@@ -95,12 +95,14 @@ def generate_kimi_comment(
         "Content-Type": "application/json",
     }
     user_prompt = _build_user_prompt(context or {}, news_text or "")
+    # K3: thinking always on; temperature/top_p fixed — omit them. Prefer low effort for speed.
     body = {
         "model": model,
-        "temperature": DEFAULT_TEMPERATURE,
         "max_tokens": DEFAULT_MAX_TOKENS,
-        # Disable thinking so Actions finishes well under timeout (thinking often ~60s+).
-        "thinking": {"type": "disabled"},
+        "reasoning_effort": (
+            (os.getenv("KIMI_REASONING_EFFORT") or DEFAULT_REASONING_EFFORT).strip()
+            or DEFAULT_REASONING_EFFORT
+        ),
         "messages": [
             {"role": "system", "content": _COMMENT_SYSTEM},
             {"role": "user", "content": user_prompt},

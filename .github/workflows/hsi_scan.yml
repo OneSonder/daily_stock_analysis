@@ -74,6 +74,7 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY || secrets.MOONSHOT_API_KEY }}
           KIMI_BASE_URL: ${{ vars.KIMI_BASE_URL || secrets.KIMI_BASE_URL }}
           KIMI_MODEL: ${{ vars.KIMI_MODEL || secrets.KIMI_MODEL }}
+          KIMI_REASONING_EFFORT: ${{ vars.KIMI_REASONING_EFFORT || secrets.KIMI_REASONING_EFFORT }}
           KIMI_COMMENT_ENABLED: ${{ vars.KIMI_COMMENT_ENABLED || secrets.KIMI_COMMENT_ENABLED }}
           ANSPIRE_API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }}
           ANSPIRE_LLM_MODEL: ${{ vars.ANSPIRE_LLM_MODEL || secrets.ANSPIRE_LLM_MODEL }}

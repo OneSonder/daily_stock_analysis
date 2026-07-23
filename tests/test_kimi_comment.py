@@ -28,7 +28,7 @@ def test_kimi_comment_explicitly_disabled(monkeypatch):
 def test_generate_kimi_comment_success(monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "sk-test")
     monkeypatch.setenv("KIMI_COMMENT_ENABLED", "true")
-    monkeypatch.setenv("KIMI_MODEL", "kimi-k2.6")
+    monkeypatch.setenv("KIMI_MODEL", "kimi-k3")
     monkeypatch.setenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 
     session = MagicMock()
@@ -51,9 +51,10 @@ def test_generate_kimi_comment_success(monkeypatch):
     called_url = session.post.call_args[0][0]
     assert called_url.endswith("/chat/completions")
     kwargs = session.post.call_args.kwargs
-    assert kwargs["json"]["temperature"] == 0.6
-    assert kwargs["json"]["model"] == "kimi-k2.6"
-    assert kwargs["json"]["thinking"] == {"type": "disabled"}
+    assert "temperature" not in kwargs["json"]
+    assert kwargs["json"]["model"] == "kimi-k3"
+    assert kwargs["json"]["reasoning_effort"] == "low"
+    assert "thinking" not in kwargs["json"]
 
 
 def test_generate_kimi_comment_soft_fails(monkeypatch):
