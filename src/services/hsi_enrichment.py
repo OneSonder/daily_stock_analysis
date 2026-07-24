@@ -497,19 +497,21 @@ def enrich_match(
     if analyzer is not None and _service_available(analyzer, default=True):
         try:
             context = build_lite_context(match, quote_dict)
-            if news_text:
-                context["analysis_notes"] = (
-                    (context.get("analysis_notes") or "")
-                    + "\n【强制消息面】已注入实时新闻文本：必须输出 news_summary（2～4 句中文点评），"
+            news_for_llm = news_text or ""
+            if news_for_llm:
+                news_for_llm = (
+                    "【强制消息面任务】请基于下列新闻输出 JSON 字段 news_summary（2～4 句中文点评），"
                     "并填写 dashboard.intelligence.latest_news / positive_catalysts / risk_alerts；"
-                    "不得只写技术面而忽略新闻。"
+                    "不得只写技术面而忽略新闻。\n\n"
+                    + news_for_llm
                 )
             else:
-                context["analysis_notes"] = (
-                    (context.get("analysis_notes") or "")
-                    + "\n【消息面】本次未检索到可用新闻：news_summary 请写「近期无可用新闻」。"
+                # Keep a short placeholder so the news section still asks for news_summary.
+                news_for_llm = (
+                    "【消息面】本次未检索到可用新闻。"
+                    "请将 news_summary 设为「近期无可用新闻」，intelligence 列表可为空。"
                 )
-            analysis = analyzer.analyze(context, news_context=news_text or None)
+            analysis = analyzer.analyze(context, news_context=news_for_llm)
             result["analysis"] = analysis
             if analysis is not None and getattr(analysis, "success", True) is False:
                 result["analysis_error"] = getattr(analysis, "error_message", None) or "analyze failed"

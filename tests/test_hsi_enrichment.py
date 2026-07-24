@@ -74,7 +74,41 @@ def test_build_lite_context_uses_quote_and_signals():
     assert "RSI/MACD/MAs" in ctx["analysis_notes"]
 
 
-def test_enrich_match_partial_failure_resilience():
+def test_enrich_match_passes_news_comment_instruction_to_deepseek():
+    match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
+    fetcher = MagicMock()
+    fetcher.get_realtime_quote.return_value = None
+    search = MagicMock()
+    search.is_available = False
+    analyzer = MagicMock()
+    analyzer.is_available = MagicMock(return_value=True)
+    analyzer.analyze.return_value = SimpleNamespace(success=True, news_summary="消息面偏暖")
+
+    with patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=True,
+    ), patch(
+        "src.services.tencent_stock_news.fetch_tencent_stock_news",
+        return_value=[
+            {
+                "title": "腾讯发布新品",
+                "time": "2026-07-23 10:00:00",
+                "url": "https://example.com/n1",
+                "src": "腾讯新闻",
+            }
+        ],
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=False,
+    ):
+        enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+
+    assert analyzer.analyze.called
+    kwargs = analyzer.analyze.call_args.kwargs
+    news_ctx = kwargs.get("news_context") or ""
+    assert "强制消息面任务" in news_ctx
+    assert "news_summary" in news_ctx
+    assert "腾讯发布新品" in news_ctx
     match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
 
     fetcher = MagicMock()
