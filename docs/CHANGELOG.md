@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI DeepSeek 仅使用本次实时抓取且落在 `HSI_NEWS_MAX_AGE_DAYS`（默认 2 日）内的新闻，禁止用训练记忆/历史旧闻补消息面。
 - [改进] HSI DeepSeek 仪表盘强制点评消息面：提示词要求填写 `news_summary` / 利好催化 / 最新消息，并在报告中展示。
 - [改进] HSI `potential_score` 纳入 RSI/MACD 状态加减分（`rsi_macd_score`，范围 −12～+12）。
 - [改进] HSI Signal Scan 定时改为每个交易日香港时间 15:00（UTC 07:00）。

@@ -75,6 +75,9 @@ def test_build_lite_context_uses_quote_and_signals():
 
 
 def test_enrich_match_passes_news_comment_instruction_to_deepseek():
+    from datetime import date
+
+    today = date.today().isoformat()
     match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
     fetcher = MagicMock()
     fetcher.get_realtime_quote.return_value = None
@@ -92,9 +95,9 @@ def test_enrich_match_passes_news_comment_instruction_to_deepseek():
         return_value=[
             {
                 "title": "腾讯发布新品",
-                "time": "2026-07-23 10:00:00",
+                "published_date": f"{today} 10:00:00",
                 "url": "https://example.com/n1",
-                "src": "腾讯新闻",
+                "source": "腾讯新闻",
             }
         ],
     ), patch(
@@ -104,14 +107,19 @@ def test_enrich_match_passes_news_comment_instruction_to_deepseek():
         enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
 
     assert analyzer.analyze.called
-    kwargs = analyzer.analyze.call_args.kwargs
+    args, kwargs = analyzer.analyze.call_args
     news_ctx = kwargs.get("news_context") or ""
-    assert "强制消息面任务" in news_ctx
+    assert "本次实时抓取" in news_ctx
+    assert "禁止使用模型训练记忆" in news_ctx
     assert "news_summary" in news_ctx
     assert "腾讯发布新品" in news_ctx
+    assert args[0].get("news_window_days") == 2
 
 
 def test_enrich_match_partial_failure_resilience():
+    from datetime import date
+
+    today = date.today().isoformat()
     match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
 
     fetcher = MagicMock()
@@ -125,10 +133,10 @@ def test_enrich_match_partial_failure_resilience():
             SimpleNamespace(
                 title="腾讯新闻",
                 snippet="摘要",
-                published_date="2026-07-21",
+                published_date=today,
             )
         ],
-        to_context=lambda max_results=5: "- 腾讯新闻 [2026-07-21]\n  摘要",
+        to_context=lambda max_results=5: f"- 腾讯新闻 [{today}]\n  摘要",
     )
 
     analyzer = MagicMock()
@@ -153,6 +161,9 @@ def test_enrich_match_partial_failure_resilience():
 
 
 def test_enrich_match_prefers_tencent_ifzq_news():
+    from datetime import date
+
+    today = date.today().isoformat()
     match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
     fetcher = MagicMock()
     fetcher.get_realtime_quote.return_value = None
@@ -172,7 +183,7 @@ def test_enrich_match_prefers_tencent_ifzq_news():
             "snippet": "腾讯营收领先",
             "url": "https://gu.qq.com/x",
             "source": "智研咨询",
-            "published_date": "2026-07-21 13:46:12",
+            "published_date": f"{today} 13:46:12",
             "provider": "tencent_ifzq",
             "symbol": "hk00700",
         }
@@ -195,6 +206,9 @@ def test_enrich_match_prefers_tencent_ifzq_news():
 
 
 def test_enrich_match_falls_back_to_search_when_ifzq_empty():
+    from datetime import date
+
+    today = date.today().isoformat()
     match = {"code": "0700.HK", "name": "腾讯", "close": 400}
     fetcher = MagicMock()
     fetcher.get_realtime_quote.return_value = None
@@ -202,8 +216,8 @@ def test_enrich_match_falls_back_to_search_when_ifzq_empty():
     search.is_available = True
     search.search_stock_news.return_value = SimpleNamespace(
         success=True,
-        results=[SimpleNamespace(title="备用新闻", snippet="s", published_date="2026-07-20")],
-        to_context=lambda max_results=5: "- 备用新闻 [2026-07-20]",
+        results=[SimpleNamespace(title="备用新闻", snippet="s", published_date=today)],
+        to_context=lambda max_results=5: f"- 备用新闻 [{today}]",
     )
     analyzer = MagicMock()
     analyzer.is_available = MagicMock(return_value=False)

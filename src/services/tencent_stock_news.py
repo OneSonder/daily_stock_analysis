@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -24,10 +25,85 @@ DEFAULT_NEWS_TYPE = 2
 DEFAULT_PAGE = 1
 DEFAULT_N = 10
 DEFAULT_TIMEOUT = 10.0
+DEFAULT_HSI_NEWS_MAX_AGE_DAYS = 2
 
 _HK_SUFFIX_RE = re.compile(r"^(\d{1,5})\.hk$", re.IGNORECASE)
 _HK_PREFIX_RE = re.compile(r"^hk(\d{1,5})$", re.IGNORECASE)
 _A_PREFIX_RE = re.compile(r"^(sh|sz|bj)(\d{6})$", re.IGNORECASE)
+_DATE_RE = re.compile(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})")
+
+
+def resolve_hsi_news_max_age_days() -> int:
+    """Max age (days) for HSI live news fed to DeepSeek. Default 2."""
+    raw = (os.getenv("HSI_NEWS_MAX_AGE_DAYS") or str(DEFAULT_HSI_NEWS_MAX_AGE_DAYS)).strip()
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_HSI_NEWS_MAX_AGE_DAYS
+
+
+def parse_news_publish_date(raw: Any) -> Optional[date]:
+    """Parse common news date strings to a date (local calendar day)."""
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    # Prefer explicit YYYY-MM-DD / YYYY/MM/DD
+    m = _DATE_RE.search(text)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.strptime(text[: len(fmt) + 8], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def filter_fresh_news_items(
+    items: List[Dict[str, Any]],
+    *,
+    max_age_days: Optional[int] = None,
+    keep_undated: bool = True,
+    today: Optional[date] = None,
+) -> List[Dict[str, Any]]:
+    """Keep newest items within max_age_days; drop stale dated headlines."""
+    window = max_age_days if max_age_days is not None else resolve_hsi_news_max_age_days()
+    window = max(1, int(window))
+    cutoff = (today or date.today()) - timedelta(days=window - 1)
+    kept: List[Dict[str, Any]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        published = parse_news_publish_date(item.get("published_date") or item.get("time"))
+        if published is None:
+            if keep_undated:
+                kept.append(item)
+            continue
+        if published >= cutoff:
+            kept.append(item)
+
+    def _sort_key(it: Dict[str, Any]):
+        d = parse_news_publish_date(it.get("published_date") or it.get("time"))
+        # Dated first (newest), then undated in original relative order.
+        return (0 if d is not None else 1, -(d.toordinal()) if d else 0)
+
+    return sorted(kept, key=_sort_key)
 
 
 def is_tencent_stock_news_enabled() -> bool:
@@ -193,11 +269,17 @@ def fetch_tencent_stock_news(
 
 
 def format_tencent_news_context(items: List[Dict[str, Any]], *, max_items: int = 10) -> str:
-    """Format ifzq news items into LLM/report context text."""
+    """Format ifzq news items into LLM/report context text (newest first when dated)."""
     if not items:
         return ""
+
+    def _sort_key(it: Dict[str, Any]):
+        d = parse_news_publish_date(it.get("published_date")) if isinstance(it, dict) else None
+        return (0 if d is not None else 1, -(d.toordinal()) if d else 0)
+
+    ordered = sorted([i for i in items if isinstance(i, dict)], key=_sort_key)
     lines: List[str] = []
-    for item in items[: max(1, int(max_items))]:
+    for item in ordered[: max(1, int(max_items))]:
         title = (item.get("title") or "").strip()
         if not title:
             continue

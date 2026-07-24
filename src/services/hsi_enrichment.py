@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -83,6 +83,62 @@ def _format_news_context(response: Any) -> str:
         if snippet:
             lines.append(f"  {snippet[:200]}")
     return "\n".join(lines)
+
+
+def _filter_search_news_text(text: str, *, max_age_days: int) -> str:
+    """Drop dated search bullets older than the HSI live window; keep undated."""
+    from src.services.tencent_stock_news import parse_news_publish_date
+
+    text = (text or "").strip()
+    if not text:
+        return ""
+    cutoff = date.today() - timedelta(days=max(1, int(max_age_days)) - 1)
+    kept: List[str] = []
+    current_block: List[str] = []
+
+    def _flush() -> None:
+        nonlocal current_block
+        if not current_block:
+            return
+        head = current_block[0]
+        published = None
+        if "[" in head and "]" in head:
+            meta = head[head.rfind("[") + 1 : head.rfind("]")]
+            published = parse_news_publish_date(meta.split(",", 1)[0].strip())
+        if published is None or published >= cutoff:
+            kept.extend(current_block)
+        current_block = []
+
+    for line in text.splitlines():
+        if line.strip().startswith("-"):
+            _flush()
+            current_block = [line]
+        elif current_block:
+            current_block.append(line)
+    _flush()
+    return "\n".join(kept)
+
+
+def _build_live_news_for_deepseek(news_text: str, *, max_age_days: int) -> str:
+    """Wrap live-fetched news so DeepSeek cannot fall back to training history."""
+    body = (news_text or "").strip()
+    if not body:
+        return (
+            "【消息面·本次实时抓取】未检索到近"
+            f"{max_age_days}日内可用新闻。"
+            "请将 news_summary 设为「近期无可用新闻」，intelligence 列表可为空。"
+            "禁止用训练记忆或历史知识编造旧闻。"
+        )
+    return (
+        f"【消息面·本次实时抓取｜仅允许使用下列近{max_age_days}日新闻】\n"
+        "规则（强制）：\n"
+        "1. 只允许引用下方实时抓取条目；禁止使用模型训练记忆、往期研报/财报记忆或历史知识补新闻。\n"
+        "2. 不得编造未出现在下列列表中的标题、日期、业绩或事件。\n"
+        "3. 必须输出 news_summary（2～4 句中文点评），并填写 "
+        "dashboard.intelligence.latest_news / positive_catalysts / risk_alerts。\n"
+        "4. 每条 intelligence 输出必须带列表中的日期；列表外日期一律禁止。\n\n"
+        f"{body}"
+    )
 
 
 def build_lite_context(
@@ -442,18 +498,30 @@ def enrich_match(
     news_provider: Optional[str] = None
     search_text = ""
     search_error: Optional[str] = None
+    max_age_days = 2
+    try:
+        from src.services.tencent_stock_news import resolve_hsi_news_max_age_days
+
+        max_age_days = resolve_hsi_news_max_age_days()
+    except Exception:
+        max_age_days = 2
 
     # Prefer Tencent ifzq live symbol news (no API key); soft-fail if empty/disabled.
     try:
         from src.services.tencent_stock_news import (
             fetch_tencent_stock_news,
+            filter_fresh_news_items,
             format_tencent_news_context,
             is_tencent_stock_news_enabled,
             merge_news_contexts,
         )
 
         if is_tencent_stock_news_enabled():
-            ifzq_items = fetch_tencent_stock_news(code, n=10)
+            ifzq_items = filter_fresh_news_items(
+                fetch_tencent_stock_news(code, n=10),
+                max_age_days=max_age_days,
+                keep_undated=True,
+            )
             if ifzq_items:
                 news_text = format_tencent_news_context(ifzq_items, max_items=10)
                 news_provider = "tencent_ifzq"
@@ -466,7 +534,10 @@ def enrich_match(
         try:
             response = search.search_stock_news(code, name, max_results=5)
             if getattr(response, "success", False):
-                search_text = _format_news_context(response)
+                search_text = _filter_search_news_text(
+                    _format_news_context(response),
+                    max_age_days=max_age_days,
+                )
             else:
                 search_error = getattr(response, "error_message", None) or "search failed"
         except Exception as exc:
@@ -477,40 +548,34 @@ def enrich_match(
     else:
         search_error = "no search providers configured"
 
+    # Keep live ifzq body separate so DeepSeek does not ingest merged search history.
+    ifzq_news = news_text
     if news_text and search_text:
-        news_text = merge_news_contexts(news_text, search_text, max_secondary_lines=2)
-        result["news_text"] = news_text
+        result["news_text"] = merge_news_contexts(news_text, search_text, max_secondary_lines=2)
         result["news_provider"] = f"{news_provider}+search" if news_provider else "search"
         result["news_error"] = None
     elif news_text:
         result["news_error"] = None
     elif search_text:
-        news_text = search_text
-        result["news_text"] = news_text
+        result["news_text"] = search_text
         result["news_provider"] = "search"
         result["news_error"] = None
     else:
         result["news_text"] = ""
         result["news_error"] = search_error or "no news results"
 
+    # DeepSeek: prefer live ifzq only; fall back to age-filtered search.
+    deepseek_news = ifzq_news or search_text or ""
+
     context: Optional[Dict[str, Any]] = None
     if analyzer is not None and _service_available(analyzer, default=True):
         try:
             context = build_lite_context(match, quote_dict)
-            news_for_llm = news_text or ""
-            if news_for_llm:
-                news_for_llm = (
-                    "【强制消息面任务】请基于下列新闻输出 JSON 字段 news_summary（2～4 句中文点评），"
-                    "并填写 dashboard.intelligence.latest_news / positive_catalysts / risk_alerts；"
-                    "不得只写技术面而忽略新闻。\n\n"
-                    + news_for_llm
-                )
-            else:
-                # Keep a short placeholder so the news section still asks for news_summary.
-                news_for_llm = (
-                    "【消息面】本次未检索到可用新闻。"
-                    "请将 news_summary 设为「近期无可用新闻」，intelligence 列表可为空。"
-                )
+            context["news_window_days"] = max_age_days
+            news_for_llm = _build_live_news_for_deepseek(
+                deepseek_news,
+                max_age_days=max_age_days,
+            )
             analysis = analyzer.analyze(context, news_context=news_for_llm)
             result["analysis"] = analysis
             if analysis is not None and getattr(analysis, "success", True) is False:
@@ -530,7 +595,7 @@ def enrich_match(
         if is_kimi_comment_enabled():
             if context is None:
                 context = build_lite_context(match, quote_dict)
-            comment = generate_kimi_comment(context, news_text or "")
+            comment = generate_kimi_comment(context, deepseek_news or result.get("news_text") or "")
             if comment:
                 result["kimi_comment"] = comment
                 result["kimi_comment_error"] = None

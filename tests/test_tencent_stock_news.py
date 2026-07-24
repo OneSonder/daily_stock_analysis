@@ -119,3 +119,23 @@ def test_format_and_merge_news_context():
     assert "标题B" in merged
     assert "标题C" in merged
     assert merged.count("标题A") == 1
+
+
+def test_filter_fresh_news_items_drops_stale():
+    from datetime import date
+
+    from src.services.tencent_stock_news import filter_fresh_news_items
+
+    today = date(2026, 7, 24)
+    items = [
+        {"title": "旧闻", "published_date": "2026-07-20"},
+        {"title": "今日", "published_date": "2026-07-24 09:00:00"},
+        {"title": "昨日", "published_date": "2026-07-23"},
+        {"title": "无日期"},
+    ]
+    kept = filter_fresh_news_items(items, max_age_days=2, keep_undated=True, today=today)
+    titles = [i["title"] for i in kept]
+    assert titles[0] == "今日"
+    assert "昨日" in titles
+    assert "无日期" in titles
+    assert "旧闻" not in titles
