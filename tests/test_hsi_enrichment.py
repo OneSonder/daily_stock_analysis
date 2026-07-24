@@ -290,12 +290,36 @@ def test_format_sections_with_errors():
             confidence_level="中",
             analysis_summary="突破",
             risk_warning="",
-            news_summary="",
-            dashboard={},
+            news_summary="公司发布利好合同，情绪偏暖。",
+            dashboard={
+                "intelligence": {
+                    "latest_news": ["2026-07-23 签订大单"],
+                    "positive_catalysts": ["合同落地"],
+                    "risk_alerts": ["注意获利回吐"],
+                }
+            },
         )
     )
     assert "[DeepSeek] 综合评分: 70" in deep
     assert "来源: **DeepSeek**" in deep
+    assert "[DeepSeek] 消息面点评: 公司发布利好合同" in deep
+    assert "[DeepSeek] 最新消息: 2026-07-23 签订大单" in deep
+    assert "[DeepSeek] 利好催化: 合同落地" in deep
+    assert "[DeepSeek] 风险警报: 注意获利回吐" in deep
+    empty_news = format_dashboard_section(
+        SimpleNamespace(
+            success=True,
+            sentiment_score=50,
+            operation_advice="观望",
+            trend_prediction="震荡",
+            confidence_level="低",
+            analysis_summary="",
+            risk_warning="",
+            news_summary="",
+            dashboard={},
+        )
+    )
+    assert "[DeepSeek] 消息面点评: （未输出）" in empty_news
 
 
 def test_enrich_match_adds_kimi_comment():

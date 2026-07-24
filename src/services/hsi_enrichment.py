@@ -169,6 +169,9 @@ def build_lite_context(
         "patterns": patterns,
         "analysis_notes": (
             "HSI lite enrichment: S1/S2 signals + RSI/MACD/MAs + chart patterns + realtime quote. "
+            "You MUST also comment on news/message flow: fill news_summary (2-4 Chinese sentences) "
+            "and dashboard.intelligence.latest_news / positive_catalysts / risk_alerts from the injected news. "
+            "If no news is provided, set news_summary to「近期无可用新闻」and keep intelligence lists empty. "
             f"Signals={hsi_signals}; Technicals={technicals}; Patterns={patterns}"
         ),
     }
@@ -266,6 +269,18 @@ def format_news_section(news_text: str, error: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
+def _format_intel_items(value: Any) -> str:
+    """Normalize intelligence list/str fields for report display."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return "；".join(parts)
+    return str(value).strip()
+
+
 def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
     lines = [
         "### DeepSeek 决策仪表盘",
@@ -304,7 +319,9 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
     if summary:
         lines.append(f"- [DeepSeek] 摘要: {summary}")
     if news_summary:
-        lines.append(f"- [DeepSeek] 消息面: {news_summary}")
+        lines.append(f"- [DeepSeek] 消息面点评: {news_summary}")
+    else:
+        lines.append("- [DeepSeek] 消息面点评: （未输出）")
     if risk:
         lines.append(f"- [DeepSeek] 风险提示: {risk}")
 
@@ -333,7 +350,13 @@ def format_dashboard_section(analysis: Any, error: Optional[str] = None) -> str:
                         lines.append(f"- [DeepSeek] {label}: {val}")
         intelligence = dashboard.get("intelligence") or {}
         if isinstance(intelligence, dict):
-            alerts = intelligence.get("risk_alerts")
+            latest = _format_intel_items(intelligence.get("latest_news"))
+            catalysts = _format_intel_items(intelligence.get("positive_catalysts"))
+            alerts = _format_intel_items(intelligence.get("risk_alerts"))
+            if latest:
+                lines.append(f"- [DeepSeek] 最新消息: {latest}")
+            if catalysts:
+                lines.append(f"- [DeepSeek] 利好催化: {catalysts}")
             if alerts:
                 lines.append(f"- [DeepSeek] 风险警报: {alerts}")
 
@@ -474,6 +497,18 @@ def enrich_match(
     if analyzer is not None and _service_available(analyzer, default=True):
         try:
             context = build_lite_context(match, quote_dict)
+            if news_text:
+                context["analysis_notes"] = (
+                    (context.get("analysis_notes") or "")
+                    + "\n【强制消息面】已注入实时新闻文本：必须输出 news_summary（2～4 句中文点评），"
+                    "并填写 dashboard.intelligence.latest_news / positive_catalysts / risk_alerts；"
+                    "不得只写技术面而忽略新闻。"
+                )
+            else:
+                context["analysis_notes"] = (
+                    (context.get("analysis_notes") or "")
+                    + "\n【消息面】本次未检索到可用新闻：news_summary 请写「近期无可用新闻」。"
+                )
             analysis = analyzer.analyze(context, news_context=news_text or None)
             result["analysis"] = analysis
             if analysis is not None and getattr(analysis, "success", True) is False:
