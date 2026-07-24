@@ -109,6 +109,9 @@ def test_enrich_match_passes_news_comment_instruction_to_deepseek():
     assert "强制消息面任务" in news_ctx
     assert "news_summary" in news_ctx
     assert "腾讯发布新品" in news_ctx
+
+
+def test_enrich_match_partial_failure_resilience():
     match = {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 80}
 
     fetcher = MagicMock()
