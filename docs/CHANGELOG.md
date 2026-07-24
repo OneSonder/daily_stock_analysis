@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI Signal Scan 定时改为每个交易日香港时间 15:00（UTC 07:00）。
 - [改进] HSI 扫描/增强报告中的 K 线形态显示中文名（如 `双顶(double_top)`），内部仍保留英文 id。
 - [改进] HSI Kimi 点评默认模型改为 `kimi-k3`（`reasoning_effort=low`，省略固定 temperature），不再使用 k2.6 的 `thinking.disabled`。
 - [chore] 禁用 GitHub Actions `Network Smoke` 定时任务（workflow 保留，job `if: false`）。
