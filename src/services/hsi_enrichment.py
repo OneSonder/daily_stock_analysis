@@ -9,7 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from src.services.hsi_scanner import format_scan_report, get_scan_config_from_env, scan_hsi
+from src.services.hsi_scanner import (
+    format_pattern_names,
+    format_scan_report,
+    get_scan_config_from_env,
+    scan_hsi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -240,10 +245,7 @@ def format_technical_section(match: Optional[Dict[str, Any]] = None) -> str:
         )
         if match.get("macd_signal"):
             lines.append(f"  - {match.get('macd_signal')}")
-    if patterns:
-        lines.append(f"- 形态: {', '.join(patterns)}")
-    else:
-        lines.append("- 形态: 无")
+    lines.append(f"- 形态: {format_pattern_names(patterns)}")
     lines.append("")
     return "\n".join(lines)
 

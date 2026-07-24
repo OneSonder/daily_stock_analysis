@@ -268,7 +268,7 @@ def test_format_technical_section_renders_indicators():
     )
     assert "技术指标与形态" in text
     assert "MA20=100.0" in text
-    assert "double_top" in text
+    assert "双顶(double_top)" in text
 
 
 def test_format_sections_with_errors():

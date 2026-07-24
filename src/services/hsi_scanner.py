@@ -376,6 +376,42 @@ def _detect_candlestick_patterns(work: pd.DataFrame) -> Dict[str, bool]:
     }
 
 
+# English pattern ids kept in data; Chinese labels for report display.
+PATTERN_LABELS_ZH: Dict[str, str] = {
+    "w_bottom": "W底",
+    "double_bottom": "双底",
+    "inverse_head_shoulders": "头肩底",
+    "bull_flag": "上升旗形",
+    "gap_up": "向上跳空",
+    "bullish_engulfing": "看涨吞没",
+    "hammer": "锤头线",
+    "m_top": "M头",
+    "double_top": "双顶",
+    "head_shoulders": "头肩顶",
+    "bear_flag": "下降旗形",
+    "gap_down": "向下跳空",
+    "bearish_engulfing": "看跌吞没",
+    "shooting_star": "射击之星",
+    "doji": "十字星",
+    "triangle_breakout": "三角形突破",
+}
+
+
+def pattern_label_zh(name: str) -> str:
+    """Return Chinese display label for a pattern id; fall back to the raw id."""
+    key = (name or "").strip()
+    if not key:
+        return ""
+    zh = PATTERN_LABELS_ZH.get(key)
+    return f"{zh}({key})" if zh else key
+
+
+def format_pattern_names(patterns: Optional[List[str]]) -> str:
+    """Format pattern ids as Chinese labels for reports."""
+    labels = [pattern_label_zh(p) for p in (patterns or []) if p]
+    return ", ".join(labels) if labels else "无"
+
+
 def _kline_pattern_summary(flags: Dict[str, bool], triangle_direction: Optional[str]) -> Tuple[List[str], List[str], List[str], float]:
     bullish_weights = {
         'w_bottom': 4.0,
@@ -1060,7 +1096,7 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
                 f"| {'✅' if m['close_vs_s2_entry'] else '❌'} |"
             )
         lines.append("")
-        lines.append("### Technicals & patterns\n")
+        lines.append("### 技术指标与形态\n")
         for m in matches:
             code = m.get('code', '')
             name = m.get('name', '')
@@ -1081,13 +1117,12 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
             )
             if m.get('macd_signal'):
                 macd_line += f" — {m.get('macd_signal')}"
-            patterns = m.get('kline_patterns') or []
-            pattern_text = ', '.join(patterns) if patterns else '无'
+            pattern_text = format_pattern_names(m.get('kline_patterns') or [])
             lines.append(f"- **{name} ({code})**: {alignment}")
             lines.append(f"  - {ma_line}")
             lines.append(f"  - {rsi_line}")
             lines.append(f"  - {macd_line}")
-            lines.append(f"  - Patterns: {pattern_text}")
+            lines.append(f"  - 形态: {pattern_text}")
         lines.append("")
     else:
         lines.append("No stocks matched the selected conditions.\n")
