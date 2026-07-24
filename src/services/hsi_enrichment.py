@@ -531,7 +531,9 @@ def build_enriched_report(
         tier = match.get("potential_tier")
         parts.append(f"## {idx}. {name} ({code})")
         parts.append("")
-        parts.append(f"- potential_score: {score} | tier: {tier}")
+        parts.append(
+            f"- potential_score: {score} | tier: {tier} | rsi_macd_score: {match.get('rsi_macd_score')}"
+        )
         parts.append("")
         parts.append(format_quote_section(item.get("quote"), item.get("quote_error")))
         parts.append(format_technical_section(match))

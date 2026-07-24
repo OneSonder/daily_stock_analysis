@@ -113,6 +113,18 @@ class TestHSIScannerKlinePatterns(unittest.TestCase):
         self.assertTrue(np.isfinite(out["rsi_12"]))
         self.assertTrue(np.isfinite(out["macd_dif"]))
         self.assertIn("kline_patterns", out)
+        self.assertIn("rsi_macd_score", out)
+        self.assertTrue(np.isfinite(out["rsi_macd_score"]))
+
+    def test_rsi_macd_indicator_score_weights(self):
+        from src.services.hsi_scanner import _rsi_macd_indicator_score
+
+        bullish = _rsi_macd_indicator_score({"macd_status": "金叉", "rsi_status": "强势买入"})
+        bearish = _rsi_macd_indicator_score({"macd_status": "死叉", "rsi_status": "超买"})
+        self.assertGreater(bullish, 0)
+        self.assertLess(bearish, 0)
+        self.assertEqual(_rsi_macd_indicator_score({}), 0.0)
+        self.assertEqual(_rsi_macd_indicator_score({"macd_status": "零轴上金叉", "rsi_status": "超卖"}), 12.0)
 
 
 if __name__ == "__main__":

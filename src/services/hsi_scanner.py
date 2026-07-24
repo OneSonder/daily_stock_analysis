@@ -478,6 +478,31 @@ def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, 'value') else value
 
 
+def _rsi_macd_indicator_score(technicals: Optional[Dict[str, Any]]) -> float:
+    """Bounded RSI/MACD contribution to potential_score (−12 … +12). Soft-fail to 0."""
+    tech = technicals or {}
+    macd_weights = {
+        "零轴上金叉": 8.0,
+        "金叉": 6.0,
+        "上穿零轴": 5.0,
+        "多头": 3.0,
+        "空头": -3.0,
+        "下穿零轴": -5.0,
+        "死叉": -6.0,
+    }
+    rsi_weights = {
+        "超卖": 6.0,
+        "强势买入": 4.0,
+        "中性": 0.0,
+        "弱势": -3.0,
+        "超买": -4.0,
+    }
+    macd_status = str(tech.get("macd_status") or "").strip()
+    rsi_status = str(tech.get("rsi_status") or "").strip()
+    score = macd_weights.get(macd_status, 0.0) + rsi_weights.get(rsi_status, 0.0)
+    return max(-12.0, min(12.0, score))
+
+
 def _technicals_from_trend(result: Any) -> Dict[str, Any]:
     """Extract MA / MACD / RSI fields from TrendAnalysisResult."""
     if result is None:
@@ -608,7 +633,18 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         (12 if s1_exit else 0) -
         (12 if s2_exit else 0)
     )
-    potential_score = max(0.0, min(100.0, base_score + kline_pattern_score - min(20.0, s1_gap_pct + s2_gap_pct)))
+    technicals = _attach_trend_technicals(work)
+    rsi_macd_score = _rsi_macd_indicator_score(technicals)
+    potential_score = max(
+        0.0,
+        min(
+            100.0,
+            base_score
+            + kline_pattern_score
+            + rsi_macd_score
+            - min(20.0, s1_gap_pct + s2_gap_pct),
+        ),
+    )
     if potential_score >= 80:
         potential_tier = 'A'
     elif potential_score >= 60:
@@ -623,8 +659,6 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         date_iso = last_date.strftime('%Y-%m-%d')
     except Exception:
         date_iso = str(last_date)
-
-    technicals = _attach_trend_technicals(work)
 
     return {
         'date': date_iso,
@@ -666,6 +700,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'kline_pattern_score': round(kline_pattern_score, 2),
         'kline_bullish': bool(len(kline_bullish_patterns) > 0),
         'kline_bearish': bool(len(kline_bearish_patterns) > 0),
+        'rsi_macd_score': round(rsi_macd_score, 2),
         'potential_score': round(potential_score, 2),
         'potential_tier': potential_tier,
         **technicals,
