@@ -26,9 +26,14 @@ async def hsi_scan(
     output: str = Query("json", description="Output format: json, markdown"),
     enrich: bool = Query(
         False,
-        description="When true, enrich top-N matches with quote + news + lite LLM dashboard",
+        description="When true, enrich matches with quote + news + lite LLM dashboard",
     ),
-    top_n: int = Query(5, ge=1, le=20, description="Top-N matches to enrich when enrich=true"),
+    top_n: int = Query(
+        10,
+        ge=0,
+        le=100,
+        description="Enrich cap when enrich=true: 0 = all; positive = top-N matches + up to top-N ET Net",
+    ),
 ) -> dict:
     try:
         parse_conditions(conditions)

@@ -18,6 +18,7 @@ from src.services.hsi_enrichment import (
     format_technical_section,
     resolve_enrich_top_n,
     run_hsi_scan_enriched,
+    select_enrich_targets,
     select_top_matches,
 )
 
@@ -31,15 +32,71 @@ def test_select_top_matches_orders_by_potential_score():
     ]
     top = select_top_matches(matches, top_n=2)
     assert [m["code"] for m in top] == ["B", "C"]
+    all_ranked = select_top_matches(matches, top_n=None)
+    assert [m["code"] for m in all_ranked] == ["B", "C", "A", "D"]
+    assert [m["code"] for m in select_top_matches(matches, top_n=0)] == [
+        "B",
+        "C",
+        "A",
+        "D",
+    ]
+
+
+def test_select_enrich_targets_includes_etnet_capped_by_top_n():
+    matches = [
+        {"code": "0700.HK", "name": "腾讯", "potential_score": 90},
+        {"code": "9988.HK", "name": "阿里", "potential_score": 50},
+    ]
+    etnet_top = {
+        "enabled": True,
+        "boards": {
+            "turnover": [
+                {"code": "0700.HK", "name": "TENCENT"},
+                {"code": "2513.HK", "name": "Z.AI"},
+                {"code": "3033.HK", "name": "CSOP"},
+            ],
+            "volume": [{"code": "1810.HK", "name": "XIAOMI"}],
+            "up": [],
+        },
+    }
+    # top_n=1 → 1 match (0700) + 1 etnet unique row (0700 skipped) → 2513
+    selected = select_enrich_targets(matches, etnet_top=etnet_top, top_n=1)
+    assert [m["code"] for m in selected] == ["0700.HK", "2513.HK"]
+    assert selected[0]["enrich_source"] == "match"
+    assert selected[1]["enrich_source"] == "etnet"
+
+    # all → both matches + remaining etnet uniques
+    all_sel = select_enrich_targets(matches, etnet_top=etnet_top, top_n=None)
+    codes = [m["code"] for m in all_sel]
+    assert codes[:2] == ["0700.HK", "9988.HK"]
+    assert "2513.HK" in codes
+    assert "3033.HK" in codes
+    assert "1810.HK" in codes
+
+
+def test_select_enrich_targets_skips_etnet_when_disabled():
+    matches = [{"code": "0700.HK", "potential_score": 80}]
+    selected = select_enrich_targets(
+        matches,
+        etnet_top={"enabled": False, "boards": {"turnover": [{"code": "2513.HK", "name": "Z"}]}},
+        top_n=None,
+    )
+    assert [m["code"] for m in selected] == ["0700.HK"]
 
 
 def test_resolve_enrich_top_n_from_env(monkeypatch):
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "3")
     assert resolve_enrich_top_n() == 3
+    monkeypatch.setenv("HSI_ENRICH_TOP_N", "0")
+    assert resolve_enrich_top_n() is None
+    monkeypatch.setenv("HSI_ENRICH_TOP_N", "all")
+    assert resolve_enrich_top_n() is None
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "bad")
-    assert resolve_enrich_top_n() == 5
+    assert resolve_enrich_top_n() == 10
     assert resolve_enrich_top_n(7) == 7
-
+    assert resolve_enrich_top_n(0) is None
+    monkeypatch.delenv("HSI_ENRICH_TOP_N", raising=False)
+    assert resolve_enrich_top_n() == 10
 
 def test_build_lite_context_uses_quote_and_signals():
     match = {
@@ -293,7 +350,8 @@ def test_build_enriched_report_contains_section_headings():
             "kimi_comment_error": None,
         }
     ]
-    report = build_enriched_report(scan_payload, enrichments, top_n=5)
+    report = build_enriched_report(scan_payload, enrichments, top_n=None)
+    assert "全部分析（匹配股 + ET Net Top，按 potential_score）" in report
     assert "多数据源行情" in report
     assert "技术指标与形态" in report
     assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
@@ -305,7 +363,8 @@ def test_build_enriched_report_contains_section_headings():
     assert "短线关注回踩支撑" in report
     assert "腾讯" in report
     assert "401" in report
-
+    capped = build_enriched_report(scan_payload, enrichments, top_n=5)
+    assert "Top 5 增强分析（匹配股 + ET Net Top，按 potential_score）" in capped
 
 def test_format_technical_section_renders_indicators():
     text = format_technical_section(
@@ -430,6 +489,18 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
         "no_price": [],
         "stats": {"tickers": 2, "total_ms": 1},
         "skipped": False,
+        "etnet_top": {
+            "enabled": True,
+            "boards": {
+                "turnover": [
+                    {"code": "0700.HK", "name": "TENCENT"},
+                    {"code": "2513.HK", "name": "Z.AI"},
+                ],
+                "volume": [],
+                "up": [],
+            },
+            "errors": {},
+        },
     }
 
     fetcher = MagicMock()
@@ -463,11 +534,14 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
             save_report=True,
         )
     assert result["top_n"] == 1
-    assert len(result["enrichments"]) == 1
+    assert len(result["enrichments"]) == 2
     assert result["enrichments"][0]["code"] == "0700.HK"
+    assert result["enrichments"][1]["code"] == "2513.HK"
     assert result["report_path"]
     path = Path(result["report_path"])
     assert path.exists()
     text = path.read_text(encoding="utf-8")
     assert "多数据源行情" in text
-    assert "Top 1 增强分析" in text
+    assert "Top 1 增强分析（匹配股 + ET Net Top" in text
+    assert "来源: 匹配" in text or "来源: ET Net" in text
+    assert "2513.HK" in text

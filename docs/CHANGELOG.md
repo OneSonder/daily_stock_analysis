@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI 增强分析默认 `HSI_ENRICH_TOP_N=10`（匹配股 Top-N + 额外最多 N 只 ET Net）；`0/all` 仍表示全部。
+- [改进] HSI 增强分析纳入 ET Net Top（成交额/量/升幅），与匹配股一并受 `HSI_ENRICH_TOP_N` 控制（两侧各截断后去重合并）。
+- [新功能] HSI 扫描合并 ET Net Top 10 成交额/成交量/升幅榜（不含跌幅榜），映射为 `0700.HK` 并入扫描池，报告展示三表；失败时回退仅扫 HSI。
+- [改进] HSI lite 增强默认分析全部匹配股（报告标题「全部分析」）；`HSI_ENRICH_TOP_N=0/all` 表示全部，正整数仍可限 Top-N。
 - [改进] HSI DeepSeek 仅使用本次实时抓取且落在 `HSI_NEWS_MAX_AGE_DAYS`（默认 2 日）内的新闻，禁止用训练记忆/历史旧闻补消息面。
 - [改进] HSI DeepSeek 仪表盘强制点评消息面：提示词要求填写 `news_summary` / 利好催化 / 最新消息，并在报告中展示。
 - [改进] HSI `potential_score` 纳入 RSI/MACD 状态加减分（`rsi_macd_score`，范围 −12～+12）。

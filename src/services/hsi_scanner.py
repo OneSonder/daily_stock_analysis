@@ -1050,6 +1050,30 @@ def scan_stocks(
     }
 
 
+def merge_stocks_with_etnet_top(
+    base: List[Dict[str, str]],
+    top_rows: List[Dict[str, str]],
+) -> Tuple[List[Dict[str, str]], int]:
+    """Preserve base order; append unique ET Net movers. Returns (merged, extra_count)."""
+    merged: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    for item in base or []:
+        code = str(item.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        merged.append({"code": code, "name": str(item.get("name") or "").strip()})
+    extra = 0
+    for item in top_rows or []:
+        code = str(item.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        merged.append({"code": code, "name": str(item.get("name") or "").strip()})
+        extra += 1
+    return merged, extra
+
+
 def scan_hsi(
     period: str = '1y',
     conditions: str = 'close_vs_entry',
@@ -1058,8 +1082,47 @@ def scan_hsi(
     check_trading_day: bool = True,
     use_multi_source: bool = False,
 ) -> Dict[str, Any]:
-    return scan_stocks(
-        stocks=HSI_STOCKS,
+    stocks: List[Dict[str, str]] = list(HSI_STOCKS)
+    etnet_meta: Dict[str, Any] = {
+        "enabled": False,
+        "top_n": 10,
+        "subtypes": [],
+        "boards": {},
+        "errors": {},
+        "merged_extra": 0,
+    }
+    try:
+        from src.services.etnet_top_movers import (
+            fetch_etnet_top_boards,
+            resolve_etnet_top_config_from_env,
+            unique_codes_from_boards,
+        )
+
+        cfg = resolve_etnet_top_config_from_env()
+        etnet_meta["enabled"] = bool(cfg.get("enabled"))
+        etnet_meta["top_n"] = cfg.get("top_n", 10)
+        etnet_meta["subtypes"] = list(cfg.get("subtypes") or [])
+        if cfg.get("enabled"):
+            fetched = fetch_etnet_top_boards(
+                subtypes=cfg.get("subtypes") or [],
+                top_n=int(cfg.get("top_n") or 10),
+            )
+            boards = fetched.get("boards") or {}
+            etnet_meta["boards"] = boards
+            etnet_meta["errors"] = fetched.get("errors") or {}
+            etnet_meta["subtypes"] = fetched.get("subtypes") or etnet_meta["subtypes"]
+            extras, merged_extra = merge_stocks_with_etnet_top(
+                stocks,
+                unique_codes_from_boards(boards),
+            )
+            stocks = extras
+            etnet_meta["merged_extra"] = merged_extra
+    except Exception as exc:
+        logger.warning("ET Net top movers merge skipped: %s", exc)
+        etnet_meta["errors"] = {"_merge": str(exc)}
+
+    payload = scan_stocks(
+        stocks=stocks,
         period=period,
         conditions=conditions,
         max_workers=max_workers,
@@ -1067,6 +1130,8 @@ def scan_hsi(
         check_trading_day=check_trading_day,
         use_multi_source=use_multi_source,
     )
+    payload["etnet_top"] = etnet_meta
+    return payload
 
 
 def scan_hsi_and_notify(
@@ -1105,6 +1170,44 @@ def scan_hsi_and_notify(
     return payload
 
 
+def _format_etnet_top_section(etnet_top: Optional[Dict[str, Any]]) -> List[str]:
+    """Render ET Net Top 10 Turnover / Volume / Gainers (never losers)."""
+    if not etnet_top or not etnet_top.get("enabled"):
+        return []
+    try:
+        from src.services.etnet_top_movers import ALLOWED_SUBTYPES, SUBTYPE_LABELS
+    except Exception:
+        ALLOWED_SUBTYPES = ("turnover", "volume", "up")
+        SUBTYPE_LABELS = {"turnover": "Turnover", "volume": "Volume", "up": "Gainers"}
+
+    boards = etnet_top.get("boards") or {}
+    errors = etnet_top.get("errors") or {}
+    lines: List[str] = []
+    extra = etnet_top.get("merged_extra")
+    if extra is not None:
+        lines.append(f"*ET Net movers merged into universe: +{extra} unique codes*\n")
+
+    for subtype in ALLOWED_SUBTYPES:
+        label = SUBTYPE_LABELS.get(subtype, subtype)
+        items = boards.get(subtype) or []
+        lines.append(f"## ET Net Top 10 {label}\n")
+        if not items:
+            err = errors.get(subtype)
+            lines.append(f"无数据{f'（{err}）' if err else ''}。\n")
+            continue
+        metric_header = "Volume" if subtype == "volume" else "Turnover"
+        lines.append(f"| Rank | Code | Name | Nominal | %Change | {metric_header} |")
+        lines.append("|------|------|------|---------|---------|----------|")
+        for row in items:
+            lines.append(
+                f"| {row.get('rank', '')} | {row.get('code', '')} | {row.get('name', '')} "
+                f"| {row.get('nominal', '')} | {row.get('change_pct', '')} "
+                f"| {row.get('metric', '')} |"
+            )
+        lines.append("")
+    return lines
+
+
 def format_scan_report(payload: Dict[str, Any]) -> str:
     lines = []
     matches = payload.get('matches', [])
@@ -1117,6 +1220,7 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
     lines.append(f"# HSI Signal Scan — {stats.get('tickers', '?')} tickers in {stats.get('total_ms', '?')}ms")
     lines.append(f"*Scanned at: {timestamp}*\n")
+    lines.extend(_format_etnet_top_section(payload.get("etnet_top")))
 
     if matches:
         lines.append(f"## Matches ({len(matches)})\n")
