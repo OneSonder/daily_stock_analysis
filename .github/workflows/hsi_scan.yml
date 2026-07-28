@@ -1,9 +1,11 @@
 name: HSI Signal Scan
 
+# Daily schedule disabled. Re-enable by restoring the cron below.
+# Manual runs via workflow_dispatch still work.
 on:
-  schedule:
-    # Once daily at 15:00 HKT (UTC 07:00), Mon-Fri
-    - cron: '0 7 * * 1-5'
+  # schedule:
+  #   # Once daily at 15:00 HKT (UTC 07:00), Mon-Fri
+  #   - cron: '0 7 * * 1-5'
   workflow_dispatch:
     inputs:
       period:

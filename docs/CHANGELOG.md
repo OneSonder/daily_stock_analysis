@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [chore] 禁用 HSI Signal Scan 每日定时（保留 workflow_dispatch 手动运行）。
 - [改进] HSI 增强分析默认 `HSI_ENRICH_TOP_N=10`（匹配股 Top-N + 额外最多 N 只 ET Net）；`0/all` 仍表示全部。
 - [改进] HSI 增强分析纳入 ET Net Top（成交额/量/升幅），与匹配股一并受 `HSI_ENRICH_TOP_N` 控制（两侧各截断后去重合并）。
 - [新功能] HSI 扫描合并 ET Net Top 10 成交额/成交量/升幅榜（不含跌幅榜），映射为 `0700.HK` 并入扫描池，报告展示三表；失败时回退仅扫 HSI。
