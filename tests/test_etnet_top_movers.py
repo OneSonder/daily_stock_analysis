@@ -33,6 +33,24 @@ _SAMPLE_HTML = """
 </body></html>
 """
 
+_TC_SAMPLE_HTML = """
+<html><body>
+<table>
+<tr><td>排序</td><td>代號</td><td>名稱</td><td></td><td>按盤價</td><td>變動</td>
+<td>變動率</td><td>最高價</td><td>最低價</td><td>成交金額</td><td>貨幣</td></tr>
+<tr><td>1</td><td><a href="quote.php?code=03033">03033</a></td>
+<td><a href="quote.php?code=03033">南方恒生科技</a></td>
+<td><img alt="跌"></td><td>4.738</td><td>-0.030</td><td>-0.629%</td>
+<td>4.822</td><td>4.682</td><td>157.77億</td><td>HKD</td></tr>
+<tr><td>2</td><td><a href="quote.php?code=00700">00700</a></td>
+<td><a href="quote.php?code=00700">騰訊控股</a>
+<a href="quote_ai_analysis.php?code=700">AI 診股</a></td>
+<td><img alt="升"></td><td>474.000</td><td>7.600</td><td>1.630%</td>
+<td>475.000</td><td>462.800</td><td>103.07億</td><td>HKD</td></tr>
+</table>
+</body></html>
+"""
+
 _VOLUME_HTML = """
 <html><body>
 <table>
@@ -61,6 +79,18 @@ def test_parse_etnet_top_html_top_n():
     assert rows[0]["metric"] == "6.857B"
     assert rows[0]["subtype"] == "turnover"
     assert rows[1]["code"] == "1810.HK"
+
+
+def test_parse_etnet_tc_html_chinese_names():
+    rows = parse_etnet_top_html(_TC_SAMPLE_HTML, subtype="turnover", top_n=10)
+    assert len(rows) == 2
+    assert rows[0]["code"] == "3033.HK"
+    assert rows[0]["name"] == "南方恒生科技"
+    assert rows[0]["metric"] == "157.77億"
+    assert rows[0]["change_pct"] == "-0.629%"
+    assert rows[1]["code"] == "0700.HK"
+    assert rows[1]["name"] == "騰訊控股"
+    assert "AI" not in rows[1]["name"]
 
 
 def test_parse_volume_metric_label():
@@ -159,14 +189,16 @@ def test_format_scan_report_includes_three_etnet_sections_not_losers():
         },
     }
     text = format_scan_report(payload)
-    assert "ET Net Top 10 Turnover" in text
-    assert "ET Net Top 10 Volume" in text
-    assert "ET Net Top 10 Gainers" in text
+    assert "经济通 Top 10 成交額" in text
+    assert "经济通 Top 10 成交股數" in text
+    assert "经济通 Top 10 升幅" in text
     assert "Losers" not in text
     assert "subtype=down" not in text
     assert "0700.HK" in text
     assert "3033.HK" in text
-    assert "+3 unique codes" in text
+    assert "+3 只代码" in text
+    assert "恒指信号扫描" in text
+    assert "匹配结果" in text or "没有股票符合所选条件" in text
 
 
 @patch("src.services.etnet_top_movers.fetch_etnet_top_boards")

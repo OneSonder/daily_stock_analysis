@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """ET Net HK Top movers (HTML tables) for HSI scan universe enrichment.
 
-Fetches Top-N from:
-  http://stocks.etnet.com.hk/www/eng/stocks/realtime/top20.php?subtype={turnover|volume|up}
+Fetches Top-N from Traditional Chinese pages (Chinese names):
+  https://www.etnet.com.hk/www/tc/stocks/realtime/top20.php?subtype={turnover|volume|up}
 
 Losers (subtype=down) are intentionally unsupported.
 """
@@ -19,7 +19,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ETNET_TOP20_URL = "http://stocks.etnet.com.hk/www/eng/stocks/realtime/top20.php"
+ETNET_TOP20_URL = "https://www.etnet.com.hk/www/tc/stocks/realtime/top20.php"
 ALLOWED_SUBTYPES: Tuple[str, ...] = ("turnover", "volume", "up")
 DEFAULT_SUBTYPES: Tuple[str, ...] = ("turnover", "volume", "up")
 DEFAULT_TOP_N = 10
@@ -30,12 +30,15 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
 _TD_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.IGNORECASE | re.DOTALL)
+_A_TEXT_RE = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 _CODE_RE = re.compile(r"^\d{1,5}$")
+_AI_DIAG_RE = re.compile(r"AI\s*診股")
+_PRICE_RE = re.compile(r"^-?\d[\d,]*\.?\d*%?$")
 
 SUBTYPE_LABELS = {
-    "turnover": "Turnover",
-    "volume": "Volume",
-    "up": "Gainers",
+    "turnover": "成交額",
+    "volume": "成交股數",
+    "up": "升幅",
 }
 
 
@@ -55,6 +58,23 @@ def _strip_html(text: str) -> str:
     cleaned = cleaned.replace("&nbsp;", " ").replace("&amp;", "&")
     cleaned = cleaned.replace(",", "")
     return _WS_RE.sub(" ", cleaned).strip()
+
+
+def _cell_primary_text(td_html: str) -> str:
+    """Prefer first anchor text (clean Chinese name / code), else full stripped cell."""
+    m = _A_TEXT_RE.search(td_html or "")
+    if m:
+        return _strip_html(m.group(1))
+    return _strip_html(td_html)
+
+
+def _clean_etnet_name(name: str) -> str:
+    text = _AI_DIAG_RE.sub("", name or "")
+    return _WS_RE.sub(" ", text).strip()
+
+
+def _looks_like_price(text: str) -> bool:
+    return bool(_PRICE_RE.match((text or "").strip()))
 
 
 def _parse_bool_env(raw: str, default: bool) -> bool:
@@ -117,38 +137,57 @@ def parse_etnet_top_html(
     subtype: str,
     top_n: int = DEFAULT_TOP_N,
 ) -> List[Dict[str, Any]]:
-    """Parse ET Net top20 HTML table into ranked rows."""
+    """Parse ET Net top20 HTML table into ranked rows (TC or ENG layout)."""
     if subtype not in ALLOWED_SUBTYPES:
         return []
     n = max(1, int(top_n))
     rows: List[Dict[str, Any]] = []
     for tr_html in _TR_RE.findall(html or ""):
-        cells = [_strip_html(td) for td in _TD_RE.findall(tr_html)]
-        if len(cells) < 8:
+        td_htmls = _TD_RE.findall(tr_html)
+        if len(td_htmls) < 8:
             continue
-        # Header row
-        if cells[0].lower() in ("no", "no.") or cells[1].lower() == "code":
+        cells = [_strip_html(td) for td in td_htmls]
+        # Header row (ENG or TC)
+        head0 = cells[0].lower()
+        head1 = cells[1]
+        if head0 in ("no", "no.", "排序") or head1.lower() in ("code", "代號"):
             continue
-        rank_raw, code_raw, name = cells[0], cells[1], cells[2]
+
+        code_raw = _cell_primary_text(td_htmls[1])
         yahoo = etnet_code_to_yahoo(code_raw)
         if not yahoo:
             continue
+        name = _clean_etnet_name(_cell_primary_text(td_htmls[2]))
         try:
-            rank = int(rank_raw)
+            rank = int(cells[0])
         except (TypeError, ValueError):
             rank = len(rows) + 1
+
+        # TC layout inserts an arrow column after name:
+        # Rank Code Name Arrow Nominal Change %Change High Low Metric Currency
+        # ENG layout:
+        # Rank Code Name Nominal Change %Change High Low Metric Currency
+        if len(cells) >= 10 and not _looks_like_price(cells[3]):
+            nominal = cells[4] if len(cells) > 4 else ""
+            change = cells[5] if len(cells) > 5 else ""
+            change_pct = cells[6] if len(cells) > 6 else ""
+            metric_val = cells[9] if len(cells) > 9 else ""
+        else:
+            nominal = cells[3] if len(cells) > 3 else ""
+            change = cells[4] if len(cells) > 4 else ""
+            change_pct = cells[5] if len(cells) > 5 else ""
+            metric_val = cells[8] if len(cells) > 8 else ""
+
         metric_label = "volume" if subtype == "volume" else "turnover"
-        # Columns: No Code Name Nominal Change %Change Highest Lowest Turnover|Volume Currency
-        metric_val = cells[8] if len(cells) > 8 else ""
         rows.append(
             {
                 "rank": rank,
                 "etnet_code": str(code_raw).strip(),
                 "code": yahoo,
                 "name": name,
-                "nominal": cells[3] if len(cells) > 3 else "",
-                "change": cells[4] if len(cells) > 4 else "",
-                "change_pct": cells[5] if len(cells) > 5 else "",
+                "nominal": nominal,
+                "change": change,
+                "change_pct": change_pct,
                 "metric": metric_val,
                 "metric_label": metric_label,
                 "subtype": subtype,
@@ -183,18 +222,20 @@ def fetch_etnet_top_movers(
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; daily-stock-analysis/1.0)",
                 "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "zh-HK,zh-TW,zh;q=0.9,en;q=0.5",
             },
         )
         resp.raise_for_status()
-        # ET Net pages are often big5 / utf-8; requests may mis-detect — try content decode.
+        # Prefer UTF-8; fall back to common HK encodings.
         text = resp.text
-        if (not text or "Code" not in text) and resp.content:
+        has_table = ("代號" in text) or ("Code" in text) or ("<tr" in text.lower())
+        if (not text or not has_table) and resp.content:
             for enc in ("utf-8", "big5", "big5hkscs", "gbk"):
                 try:
                     candidate = resp.content.decode(enc)
                 except UnicodeDecodeError:
                     continue
-                if "Code" in candidate or "<tr" in candidate.lower():
+                if "代號" in candidate or "Code" in candidate or "<tr" in candidate.lower():
                     text = candidate
                     break
         return parse_etnet_top_html(text, subtype=key, top_n=top_n)
@@ -242,7 +283,6 @@ def unique_codes_from_boards(
     """Flatten boards into unique ``{code, name}`` rows (first-seen wins)."""
     if isinstance(boards, dict):
         sequences: List[List[Dict[str, Any]]] = [boards.get(k) or [] for k in ALLOWED_SUBTYPES]
-        # Also include any extra keys in insertion order
         for key, rows in boards.items():
             if key not in ALLOWED_SUBTYPES:
                 sequences.append(rows or [])

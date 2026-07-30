@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] HSI/经济通报告用户可见文案改为中文（标题、表头、来源与潜力分等）。
+- [改进] HSI ET Net Top 改为繁中页面 `etnet.com.hk/www/tc/.../top20.php`，名称显示中文（成交額/成交股數/升幅）。
 - [chore] 禁用 HSI Signal Scan 每日定时（保留 workflow_dispatch 手动运行）。
 - [改进] HSI 增强分析默认 `HSI_ENRICH_TOP_N=10`（匹配股 Top-N + 额外最多 N 只 ET Net）；`0/all` 仍表示全部。
 - [改进] HSI 增强分析纳入 ET Net Top（成交额/量/升幅），与匹配股一并受 `HSI_ENRICH_TOP_N` 控制（两侧各截断后去重合并）。

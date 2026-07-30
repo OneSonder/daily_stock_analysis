@@ -1171,33 +1171,33 @@ def scan_hsi_and_notify(
 
 
 def _format_etnet_top_section(etnet_top: Optional[Dict[str, Any]]) -> List[str]:
-    """Render ET Net Top 10 Turnover / Volume / Gainers (never losers)."""
+    """Render 经济通 Top 10 成交額 / 成交股數 / 升幅（不含跌幅）。"""
     if not etnet_top or not etnet_top.get("enabled"):
         return []
     try:
         from src.services.etnet_top_movers import ALLOWED_SUBTYPES, SUBTYPE_LABELS
     except Exception:
         ALLOWED_SUBTYPES = ("turnover", "volume", "up")
-        SUBTYPE_LABELS = {"turnover": "Turnover", "volume": "Volume", "up": "Gainers"}
+        SUBTYPE_LABELS = {"turnover": "成交額", "volume": "成交股數", "up": "升幅"}
 
     boards = etnet_top.get("boards") or {}
     errors = etnet_top.get("errors") or {}
     lines: List[str] = []
     extra = etnet_top.get("merged_extra")
     if extra is not None:
-        lines.append(f"*ET Net movers merged into universe: +{extra} unique codes*\n")
+        lines.append(f"*已将经济通榜单合并入扫描池：+{extra} 只代码*\n")
 
     for subtype in ALLOWED_SUBTYPES:
         label = SUBTYPE_LABELS.get(subtype, subtype)
         items = boards.get(subtype) or []
-        lines.append(f"## ET Net Top 10 {label}\n")
+        lines.append(f"## 经济通 Top 10 {label}\n")
         if not items:
             err = errors.get(subtype)
             lines.append(f"无数据{f'（{err}）' if err else ''}。\n")
             continue
-        metric_header = "Volume" if subtype == "volume" else "Turnover"
-        lines.append(f"| Rank | Code | Name | Nominal | %Change | {metric_header} |")
-        lines.append("|------|------|------|---------|---------|----------|")
+        metric_header = "成交股數" if subtype == "volume" else "成交金額"
+        lines.append(f"| 排序 | 代号 | 名称 | 现价 | 变动率 | {metric_header} |")
+        lines.append("|------|------|------|------|--------|----------|")
         for row in items:
             lines.append(
                 f"| {row.get('rank', '')} | {row.get('code', '')} | {row.get('name', '')} "
@@ -1215,17 +1215,22 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     stats = payload.get('stats', {})
 
     if payload.get('skipped'):
-        return f"# HSI Signal Scan Skipped\n\n{payload.get('skip_reason', 'Market closed')}"
+        skip_reason = payload.get('skip_reason') or "今日休市"
+        if skip_reason == "HK market closed today":
+            skip_reason = "今日港股休市"
+        return f"# 恒指信号扫描已跳过\n\n{skip_reason}"
 
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    lines.append(f"# HSI Signal Scan — {stats.get('tickers', '?')} tickers in {stats.get('total_ms', '?')}ms")
-    lines.append(f"*Scanned at: {timestamp}*\n")
+    lines.append(
+        f"# 恒指信号扫描 — {stats.get('tickers', '?')} 只股票，耗时 {stats.get('total_ms', '?')}ms"
+    )
+    lines.append(f"*扫描时间：{timestamp}*\n")
     lines.extend(_format_etnet_top_section(payload.get("etnet_top")))
 
     if matches:
-        lines.append(f"## Matches ({len(matches)})\n")
-        lines.append("| Code | Name | Close | S1 | S2 | Cls≥S1 | Cls≥S2 |")
-        lines.append("|------|------|-------|----|----|--------|--------|")
+        lines.append(f"## 匹配结果（{len(matches)}）\n")
+        lines.append("| 代号 | 名称 | 收盘 | S1 | S2 | 收盘≥S1 | 收盘≥S2 |")
+        lines.append("|------|------|------|----|----|--------|--------|")
         for m in matches:
             lines.append(
                 f"| [{m['code']}]({m.get('url', '')}) | {m['name']} | {m['close']} "
@@ -1244,15 +1249,15 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
                 val = m.get(key)
                 if val is not None:
                     ma_bits.append(f"{key.upper()}={val}")
-            ma_line = ', '.join(ma_bits) if ma_bits else 'MA n/a'
-            alignment = m.get('ma_alignment') or m.get('trend_status') or 'n/a'
+            ma_line = ', '.join(ma_bits) if ma_bits else '均线暂无'
+            alignment = m.get('ma_alignment') or m.get('trend_status') or '暂无'
             rsi_line = (
-                f"RSI6={m.get('rsi_6', 'n/a')}, RSI12={m.get('rsi_12', 'n/a')}"
-                f" ({m.get('rsi_status') or 'n/a'})"
+                f"RSI6={m.get('rsi_6', '暂无')}, RSI12={m.get('rsi_12', '暂无')}"
+                f" ({m.get('rsi_status') or '暂无'})"
             )
             macd_line = (
-                f"MACD={m.get('macd_status') or 'n/a'}"
-                f" DIF={m.get('macd_dif', 'n/a')} DEA={m.get('macd_dea', 'n/a')}"
+                f"MACD={m.get('macd_status') or '暂无'}"
+                f" DIF={m.get('macd_dif', '暂无')} DEA={m.get('macd_dea', '暂无')}"
             )
             if m.get('macd_signal'):
                 macd_line += f" — {m.get('macd_signal')}"
@@ -1264,10 +1269,10 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
             lines.append(f"  - 形态: {pattern_text}")
         lines.append("")
     else:
-        lines.append("No stocks matched the selected conditions.\n")
+        lines.append("没有股票符合所选条件。\n")
 
     if no_price:
-        lines.append(f"### Tickers with no price data ({len(no_price)})\n")
+        lines.append(f"### 无行情数据的代码（{len(no_price)}）\n")
         for np_item in no_price:
             lines.append(f"- {np_item['code']} ({np_item['name']}): {np_item['message']}")
         lines.append("")

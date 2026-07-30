@@ -737,10 +737,10 @@ def build_enriched_report(
     """Combine full match table with enrichment sections (matches + ET Net movers)."""
     parts: List[str] = [format_scan_report(scan_payload).rstrip(), ""]
     if top_n is None or int(top_n) <= 0:
-        parts.append("## 全部分析（匹配股 + ET Net Top，按 potential_score）")
+        parts.append("## 全部分析（匹配股 + 经济通榜单，按潜力分）")
     else:
         parts.append(
-            f"## Top {top_n} 增强分析（匹配股 + ET Net Top，按 potential_score）"
+            f"## Top {top_n} 增强分析（匹配股 + 经济通榜单，按潜力分）"
         )
     parts.append("")
 
@@ -757,15 +757,15 @@ def build_enriched_report(
         tier = match.get("potential_tier")
         source = match.get("enrich_source") or "match"
         source_label = {
-            "etnet": "ET Net",
-            "etnet+match": "ET Net + 匹配",
+            "etnet": "经济通",
+            "etnet+match": "经济通 + 匹配",
             "match": "匹配",
         }.get(str(source), str(source))
         parts.append(f"## {idx}. {name} ({code})")
         parts.append("")
         parts.append(
-            f"- 来源: {source_label} | potential_score: {score} | tier: {tier} "
-            f"| rsi_macd_score: {match.get('rsi_macd_score')}"
+            f"- 来源: {source_label} | 潜力分: {score} | 档位: {tier} "
+            f"| RSI/MACD分: {match.get('rsi_macd_score')}"
         )
         parts.append("")
         parts.append(format_quote_section(item.get("quote"), item.get("quote_error")))
