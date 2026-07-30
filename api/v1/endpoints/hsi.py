@@ -29,10 +29,16 @@ async def hsi_scan(
         description="When true, enrich matches with quote + news + lite LLM dashboard",
     ),
     top_n: int = Query(
+        0,
+        ge=0,
+        le=100,
+        description="Match enrich cap when enrich=true: 0 = all matches (default); positive = top-N matches",
+    ),
+    etnet_top_n: int = Query(
         10,
         ge=0,
         le=100,
-        description="Enrich cap when enrich=true: 0 = all; positive = top-N matches + up to top-N ET Net",
+        description="ET Net enrich extras when enrich=true: 0 = none; positive = top-N extras (default 10)",
     ),
 ) -> dict:
     try:
@@ -50,6 +56,7 @@ async def hsi_scan(
             check_trading_day=check_trading_day,
             use_multi_source=False,
             top_n=top_n,
+            etnet_top_n=etnet_top_n,
             save_report=True,
         )
         payload = result["payload"]
@@ -59,12 +66,14 @@ async def hsi_scan(
                 "report_path": result.get("report_path"),
                 "matches": payload.get("matches") or [],
                 "top_n": result.get("top_n"),
+                "etnet_top_n": result.get("etnet_top_n"),
             }
         return {
             **payload,
             "report": result["report_text"],
             "report_path": result.get("report_path"),
             "top_n": result.get("top_n"),
+            "etnet_top_n": result.get("etnet_top_n"),
             "enriched_count": len(result.get("enrichments") or []),
         }
 

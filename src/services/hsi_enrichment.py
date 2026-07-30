@@ -18,37 +18,83 @@ from src.services.hsi_scanner import (
 
 logger = logging.getLogger(__name__)
 
-# Default enrich cap. 0 / ``all`` = enrich every candidate; positive = top-N.
-DEFAULT_ENRICH_TOP_N: int = 10
+# Default enrich caps. Match: None/0/all = unlimited. ET Net: 0 = none.
+DEFAULT_ENRICH_TOP_N: Optional[int] = None  # all matches
+DEFAULT_ENRICH_ETNET_TOP_N: int = 10
+
+
+def _resolve_enrich_cap(
+    value: Optional[int],
+    *,
+    env_key: str,
+    default: Optional[int],
+) -> Optional[int]:
+    """Resolve a match-style enrich cap from arg or env.
+
+    Returns ``None`` for unlimited (``0`` / ``all`` / unset when default is None).
+    """
+    if value is not None:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return default
+        return None if n <= 0 else n
+
+    raw = (os.getenv(env_key) or "").strip()
+    if not raw:
+        return default
+    if raw.lower() == "all":
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, fallback to %s", env_key, raw, default)
+        return default
+    return None if n <= 0 else n
 
 
 def resolve_enrich_top_n(top_n: Optional[int] = None) -> Optional[int]:
-    """Resolve enrich cap from arg or HSI_ENRICH_TOP_N.
+    """Resolve match enrich cap from arg or ``HSI_ENRICH_TOP_N`` (default: all)."""
+    return _resolve_enrich_cap(
+        top_n,
+        env_key="HSI_ENRICH_TOP_N",
+        default=DEFAULT_ENRICH_TOP_N,
+    )
 
-    Returns ``None`` for unlimited (``0`` / ``all``). Default when unset is 10.
+
+def resolve_enrich_etnet_top_n(etnet_top_n: Optional[int] = None) -> Optional[int]:
+    """Resolve ET Net enrich extras cap from arg or ``HSI_ENRICH_ETNET_TOP_N``.
+
+    Unlike match ``top_n``, ``0`` means **no** ET Net extras (not unlimited).
+    Use ``all`` / ``None`` for unlimited ET Net uniques.
     """
-    if top_n is not None:
+    if etnet_top_n is not None:
         try:
-            n = int(top_n)
+            n = int(etnet_top_n)
         except (TypeError, ValueError):
-            return DEFAULT_ENRICH_TOP_N
-        return None if n <= 0 else n
+            return DEFAULT_ENRICH_ETNET_TOP_N
+        if n < 0:
+            return DEFAULT_ENRICH_ETNET_TOP_N
+        return n  # 0 = none; positive = cap
 
-    raw = (os.getenv("HSI_ENRICH_TOP_N") or "").strip()
+    raw = (os.getenv("HSI_ENRICH_ETNET_TOP_N") or "").strip()
     if not raw:
-        return DEFAULT_ENRICH_TOP_N
+        return DEFAULT_ENRICH_ETNET_TOP_N
     if raw.lower() == "all":
         return None
     try:
         n = int(raw)
     except (TypeError, ValueError):
         logger.warning(
-            "Invalid HSI_ENRICH_TOP_N=%r, fallback to %s",
+            "Invalid HSI_ENRICH_ETNET_TOP_N=%r, fallback to %s",
             raw,
-            DEFAULT_ENRICH_TOP_N,
+            DEFAULT_ENRICH_ETNET_TOP_N,
         )
-        return DEFAULT_ENRICH_TOP_N
-    return None if n <= 0 else n
+        return DEFAULT_ENRICH_ETNET_TOP_N
+    if n < 0:
+        return DEFAULT_ENRICH_ETNET_TOP_N
+    return n  # 0 = none; positive = cap
+
 
 def select_top_matches(
     matches: Sequence[Dict[str, Any]],
@@ -72,23 +118,23 @@ def _apply_enrich_cap(
     rows: Sequence[Dict[str, Any]],
     top_n: Optional[int],
 ) -> List[Dict[str, Any]]:
-    """Apply HSI_ENRICH_TOP_N-style cap (None/<=0 = all)."""
+    """Apply enrich-style cap (None = all; 0 = none; positive = top-N)."""
     items = list(rows or [])
     if top_n is None:
         return items
     n = int(top_n)
     if n <= 0:
-        return items
+        return []
     return items[:n]
 
 
 def etnet_boards_to_enrich_stubs(
     etnet_top: Optional[Dict[str, Any]],
     *,
-    top_n: Optional[int] = DEFAULT_ENRICH_TOP_N,
+    top_n: Optional[int] = DEFAULT_ENRICH_ETNET_TOP_N,
     match_by_code: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Build enrich targets from ET Net boards, capped by the same top_n as matches.
+    """Build enrich targets from ET Net boards, capped by ``HSI_ENRICH_ETNET_TOP_N``.
 
     Prefer full scan match rows when available; otherwise use code/name stubs.
     """
@@ -132,12 +178,13 @@ def select_enrich_targets(
     matches: Sequence[Dict[str, Any]],
     etnet_top: Optional[Dict[str, Any]] = None,
     top_n: Optional[int] = DEFAULT_ENRICH_TOP_N,
+    etnet_top_n: Optional[int] = DEFAULT_ENRICH_ETNET_TOP_N,
 ) -> List[Dict[str, Any]]:
-    """Combine score-ranked matches with ET Net movers; both sides use top_n.
+    """Combine score-ranked matches with ET Net movers under separate caps.
 
-    - Matches: top N by potential_score (or all)
-    - ET Net: unique codes across turnover/volume/up, excluding codes already
-      selected from matches, then capped to top N (or all)
+    - Matches: capped by ``top_n`` (``HSI_ENRICH_TOP_N``)
+    - ET Net extras: unique codes not already selected, capped by ``etnet_top_n``
+      (``HSI_ENRICH_ETNET_TOP_N``)
     """
     selected = select_top_matches(matches, top_n=top_n)
     for item in selected:
@@ -149,7 +196,7 @@ def select_enrich_targets(
         for m in (matches or [])
         if m.get("code")
     }
-    # Build full ET Net stub list first, drop already-selected, then apply same top_n.
+    # Full ET Net list first, drop already-selected, then apply etnet_top_n.
     etnet_stubs = etnet_boards_to_enrich_stubs(
         etnet_top,
         top_n=None,
@@ -160,7 +207,7 @@ def select_enrich_targets(
         for stub in etnet_stubs
         if str(stub.get("code") or "").strip().upper() not in seen
     ]
-    for stub in _apply_enrich_cap(extras, top_n):
+    for stub in _apply_enrich_cap(extras, etnet_top_n):
         code = str(stub.get("code") or "").strip().upper()
         if not code or code in seen:
             continue
@@ -761,15 +808,25 @@ def build_enriched_report(
     scan_payload: Dict[str, Any],
     enrichments: Sequence[Dict[str, Any]],
     top_n: Optional[int] = DEFAULT_ENRICH_TOP_N,
+    etnet_top_n: Optional[int] = DEFAULT_ENRICH_ETNET_TOP_N,
 ) -> str:
     """Combine full match table with enrichment sections (matches + ET Net movers)."""
     parts: List[str] = [format_scan_report(scan_payload).rstrip(), ""]
-    if top_n is None or int(top_n) <= 0:
-        parts.append("## 全部分析（匹配股 + 经济通榜单，按潜力分）")
-    else:
-        parts.append(
-            f"## Top {top_n} 增强分析（匹配股 + 经济通榜单，按潜力分）"
+    match_label = (
+        "全部匹配股"
+        if top_n is None or int(top_n) <= 0
+        else f"匹配股 Top {top_n}"
+    )
+    etnet_label = (
+        "全部经济通"
+        if etnet_top_n is None
+        else (
+            "经济通额外 0"
+            if int(etnet_top_n) <= 0
+            else f"经济通额外 Top {etnet_top_n}"
         )
+    )
+    parts.append(f"## 增强分析（{match_label} + {etnet_label}，按潜力分）")
     parts.append("")
 
     if not enrichments:
@@ -855,15 +912,17 @@ def run_hsi_scan_enriched(
     check_trading_day: bool = True,
     use_multi_source: bool = False,
     top_n: Optional[int] = None,
+    etnet_top_n: Optional[int] = None,
     fetcher: Any = None,
     search: Any = None,
     analyzer: Any = None,
     reports_dir: Optional[Path] = None,
     save_report: bool = True,
 ) -> Dict[str, Any]:
-    """Scan HSI, enrich matches + ET Net movers (both capped by top_n), save report."""
+    """Scan HSI, enrich matches + ET Net extras under separate caps, save report."""
     env_cfg = get_scan_config_from_env()
     resolved_top_n = resolve_enrich_top_n(top_n)
+    resolved_etnet_top_n = resolve_enrich_etnet_top_n(etnet_top_n)
 
     payload = scan_hsi(
         period=period or env_cfg["period"],
@@ -882,6 +941,7 @@ def run_hsi_scan_enriched(
             "payload": payload,
             "enrichments": [],
             "top_n": resolved_top_n,
+            "etnet_top_n": resolved_etnet_top_n,
             "report_text": report_text,
             "report_path": report_path,
         }
@@ -890,6 +950,7 @@ def run_hsi_scan_enriched(
         payload.get("matches") or [],
         etnet_top=payload.get("etnet_top"),
         top_n=resolved_top_n,
+        etnet_top_n=resolved_etnet_top_n,
     )
 
     active_fetcher = fetcher if fetcher is not None else _default_fetcher()
@@ -907,7 +968,12 @@ def run_hsi_scan_enriched(
             )
         )
 
-    report_text = build_enriched_report(payload, enrichments, top_n=resolved_top_n)
+    report_text = build_enriched_report(
+        payload,
+        enrichments,
+        top_n=resolved_top_n,
+        etnet_top_n=resolved_etnet_top_n,
+    )
     report_path = None
     if save_report:
         report_path = str(save_enriched_report(report_text, reports_dir=reports_dir))
@@ -917,6 +983,7 @@ def run_hsi_scan_enriched(
         "payload": payload,
         "enrichments": enrichments,
         "top_n": resolved_top_n,
+        "etnet_top_n": resolved_etnet_top_n,
         "report_text": report_text,
         "report_path": report_path,
     }

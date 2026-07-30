@@ -16,6 +16,7 @@ from src.services.hsi_enrichment import (
     format_news_section,
     format_quote_section,
     format_technical_section,
+    resolve_enrich_etnet_top_n,
     resolve_enrich_top_n,
     run_hsi_scan_enriched,
     select_enrich_targets,
@@ -59,14 +60,30 @@ def test_select_enrich_targets_includes_etnet_capped_by_top_n():
             "up": [],
         },
     }
-    # top_n=1 → 1 match (0700) + 1 etnet unique row (0700 skipped) → 2513
-    selected = select_enrich_targets(matches, etnet_top=etnet_top, top_n=1)
+    # top_n=1 + etnet_top_n=1 → 1 match (0700) + 1 etnet unique (0700 skipped) → 2513
+    selected = select_enrich_targets(
+        matches, etnet_top=etnet_top, top_n=1, etnet_top_n=1
+    )
     assert [m["code"] for m in selected] == ["0700.HK", "2513.HK"]
     assert selected[0]["enrich_source"] == "match"
     assert selected[1]["enrich_source"] == "etnet"
 
+    # Separate caps: 1 match + 2 etnet extras
+    split = select_enrich_targets(
+        matches, etnet_top=etnet_top, top_n=1, etnet_top_n=2
+    )
+    assert [m["code"] for m in split] == ["0700.HK", "2513.HK", "3033.HK"]
+
+    # etnet_top_n=0 → no ET Net extras
+    matches_only = select_enrich_targets(
+        matches, etnet_top=etnet_top, top_n=1, etnet_top_n=0
+    )
+    assert [m["code"] for m in matches_only] == ["0700.HK"]
+
     # all → both matches + remaining etnet uniques
-    all_sel = select_enrich_targets(matches, etnet_top=etnet_top, top_n=None)
+    all_sel = select_enrich_targets(
+        matches, etnet_top=etnet_top, top_n=None, etnet_top_n=None
+    )
     codes = [m["code"] for m in all_sel]
     assert codes[:2] == ["0700.HK", "9988.HK"]
     assert "2513.HK" in codes
@@ -80,6 +97,7 @@ def test_select_enrich_targets_skips_etnet_when_disabled():
         matches,
         etnet_top={"enabled": False, "boards": {"turnover": [{"code": "2513.HK", "name": "Z"}]}},
         top_n=None,
+        etnet_top_n=None,
     )
     assert [m["code"] for m in selected] == ["0700.HK"]
 
@@ -92,11 +110,26 @@ def test_resolve_enrich_top_n_from_env(monkeypatch):
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "all")
     assert resolve_enrich_top_n() is None
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "bad")
-    assert resolve_enrich_top_n() == 10
+    assert resolve_enrich_top_n() is None  # default = all
     assert resolve_enrich_top_n(7) == 7
     assert resolve_enrich_top_n(0) is None
     monkeypatch.delenv("HSI_ENRICH_TOP_N", raising=False)
-    assert resolve_enrich_top_n() == 10
+    assert resolve_enrich_top_n() is None  # default = all
+
+
+def test_resolve_enrich_etnet_top_n_from_env(monkeypatch):
+    monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "4")
+    assert resolve_enrich_etnet_top_n() == 4
+    monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "0")
+    assert resolve_enrich_etnet_top_n() == 0  # none, not unlimited
+    monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "all")
+    assert resolve_enrich_etnet_top_n() is None
+    monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "bad")
+    assert resolve_enrich_etnet_top_n() == 10
+    assert resolve_enrich_etnet_top_n(2) == 2
+    assert resolve_enrich_etnet_top_n(0) == 0
+    monkeypatch.delenv("HSI_ENRICH_ETNET_TOP_N", raising=False)
+    assert resolve_enrich_etnet_top_n() == 10
 
 def test_build_lite_context_uses_quote_and_signals():
     match = {
@@ -350,8 +383,8 @@ def test_build_enriched_report_contains_section_headings():
             "kimi_comment_error": None,
         }
     ]
-    report = build_enriched_report(scan_payload, enrichments, top_n=None)
-    assert "全部分析（匹配股 + 经济通榜单，按潜力分）" in report
+    report = build_enriched_report(scan_payload, enrichments, top_n=None, etnet_top_n=None)
+    assert "增强分析（全部匹配股 + 全部经济通，按潜力分）" in report
     assert "多数据源行情" in report
     assert "技术指标与形态" in report
     assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
@@ -363,8 +396,10 @@ def test_build_enriched_report_contains_section_headings():
     assert "短线关注回踩支撑" in report
     assert "腾讯" in report
     assert "401" in report
-    capped = build_enriched_report(scan_payload, enrichments, top_n=5)
-    assert "Top 5 增强分析（匹配股 + 经济通榜单，按潜力分）" in capped
+    capped = build_enriched_report(
+        scan_payload, enrichments, top_n=5, etnet_top_n=3
+    )
+    assert "增强分析（匹配股 Top 5 + 经济通额外 Top 3，按潜力分）" in capped
 
 def test_format_technical_section_renders_indicators():
     text = format_technical_section(
@@ -527,6 +562,7 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
             conditions="s1_breakout",
             check_trading_day=False,
             top_n=1,
+            etnet_top_n=1,
             fetcher=fetcher,
             search=search,
             analyzer=analyzer,
@@ -534,6 +570,7 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
             save_report=True,
         )
     assert result["top_n"] == 1
+    assert result["etnet_top_n"] == 1
     assert len(result["enrichments"]) == 2
     assert result["enrichments"][0]["code"] == "0700.HK"
     assert result["enrichments"][1]["code"] == "2513.HK"
@@ -542,6 +579,6 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
     assert path.exists()
     text = path.read_text(encoding="utf-8")
     assert "多数据源行情" in text
-    assert "Top 1 增强分析（匹配股 + 经济通榜单" in text
+    assert "增强分析（匹配股 Top 1 + 经济通额外 Top 1，按潜力分）" in text
     assert "来源: 匹配" in text or "来源: 经济通" in text
     assert "2513.HK" in text

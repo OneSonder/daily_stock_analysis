@@ -20,7 +20,12 @@ on:
         default: 's1_breakout,s2_breakout'
         type: string
       top_n:
-        description: 'Enrich cap (0/all = every candidate; default 10 = top-N matches + up to top-N ET Net)'
+        description: 'Match enrich cap (0/all = all matches; default all)'
+        required: false
+        default: 'all'
+        type: string
+      etnet_top_n:
+        description: 'ET Net enrich extras (0 = none; all = unlimited; default 10)'
         required: false
         default: '10'
         type: string
@@ -29,7 +34,8 @@ env:
   PYTHONUNBUFFERED: '1'
   HSI_SCAN_PERIOD: ${{ inputs.period || '3mo' }}
   HSI_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
-  HSI_ENRICH_TOP_N: ${{ inputs.top_n || '10' }}
+  HSI_ENRICH_TOP_N: ${{ inputs.top_n || 'all' }}
+  HSI_ENRICH_ETNET_TOP_N: ${{ inputs.etnet_top_n || '10' }}
 
 jobs:
   hsi-scan:
@@ -114,12 +120,14 @@ jobs:
 
           from src.services.hsi_enrichment import run_hsi_scan_enriched
 
-          raw_top = (os.getenv("HSI_ENRICH_TOP_N") or "10").strip().lower()
+          raw_top = (os.getenv("HSI_ENRICH_TOP_N") or "all").strip().lower()
           if raw_top in {"", "0", "all"}:
               enrich_top_n = 0
           else:
               enrich_top_n = int(raw_top)
 
+          # ET Net extras resolved from HSI_ENRICH_ETNET_TOP_N
+          # (0 = none, all = unlimited, positive = cap).
           result = run_hsi_scan_enriched(
               period=os.getenv("HSI_SCAN_PERIOD", "3mo"),
               conditions=os.getenv("HSI_SCAN_CONDITIONS", "s1_breakout,s2_breakout"),
@@ -133,7 +141,11 @@ jobs:
           enrichments = result.get("enrichments") or []
           print(json.dumps(payload.get("stats") or {}, indent=2))
           print(f"Matched: {len(payload.get('matches') or [])} stocks")
-          print(f"Enriched: {len(enrichments)} (top_n={result.get('top_n')!r})")
+          print(
+              "Enriched: "
+              f"{len(enrichments)} "
+              f"(top_n={result.get('top_n')!r}, etnet_top_n={result.get('etnet_top_n')!r})"
+          )
           print(f"Report path: {result.get('report_path')}")
           print()
           print(result.get("report_text") or "")
