@@ -286,8 +286,12 @@ def build_lite_context(
     hsi_signals = {
         "entry20": match.get("entry20"),
         "entry55": match.get("entry55"),
+        "exit10": match.get("exit10"),
+        "exit20": match.get("exit20"),
         "s1_breakout": match.get("s1_breakout"),
         "s2_breakout": match.get("s2_breakout"),
+        "s1_exit": match.get("s1_exit"),
+        "s2_exit": match.get("s2_exit"),
         "close_vs_entry": match.get("close_vs_entry"),
         "close_vs_s2_entry": match.get("close_vs_s2_entry"),
         "potential_score": match.get("potential_score"),
@@ -295,6 +299,14 @@ def build_lite_context(
         "s1_gap_pct": match.get("s1_gap_pct"),
         "s2_gap_pct": match.get("s2_gap_pct"),
         "kline_patterns": match.get("kline_patterns"),
+        "n": match.get("n"),
+        "stop_long_2n": match.get("stop_long_2n"),
+        "breakout_extension_n": match.get("breakout_extension_n"),
+        "turtle_trend_ok": match.get("turtle_trend_ok"),
+        "turtle_trend_rule": match.get("turtle_trend_rule"),
+        "s1_last_was_winner": match.get("s1_last_was_winner"),
+        "s1_entry_allowed": match.get("s1_entry_allowed"),
+        "turtle_score": match.get("turtle_score"),
     }
 
     technicals = {
@@ -424,6 +436,22 @@ def format_technical_section(match: Optional[Dict[str, Any]] = None) -> str:
         if match.get("macd_signal"):
             lines.append(f"  - {match.get('macd_signal')}")
     lines.append(f"- 形态: {format_pattern_names(patterns)}")
+    if any(
+        match.get(k) is not None
+        for k in ("n", "stop_long_2n", "turtle_trend_ok", "s1_entry_allowed")
+    ):
+        lines.append(
+            f"- 海龟: N={match.get('n', '暂无')}, "
+            f"2N止损参考={match.get('stop_long_2n', '暂无')}, "
+            f"突破延伸N={match.get('breakout_extension_n', '暂无')}, "
+            f"turtle分={match.get('turtle_score', '暂无')}"
+        )
+        lines.append(
+            f"- 趋势过滤: {'通过' if match.get('turtle_trend_ok') else '未通过'}"
+            f"（{match.get('turtle_trend_rule') or '暂无'}）"
+            f" | S1上次盈利跳过: {'是' if match.get('s1_last_was_winner') else '否'}"
+            f" | S1允许开仓: {'是' if match.get('s1_entry_allowed') else '否'}"
+        )
     lines.append("")
     return "\n".join(lines)
 

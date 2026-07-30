@@ -111,6 +111,7 @@ HSI_STOCKS = [
 
 VALID_CONDITIONS = {
     'close_vs_entry', 'close_vs_s2_entry', 's1_breakout', 's2_breakout', 's1_exit', 's2_exit',
+    's1_entry_allowed', 'turtle_trend_ok',
     'w_bottom', 'm_top', 'double_bottom', 'double_top', 'head_shoulders', 'inverse_head_shoulders',
     'triangle_breakout', 'bull_flag', 'bear_flag', 'gap_up', 'gap_down',
     'bullish_engulfing', 'bearish_engulfing', 'doji', 'hammer', 'shooting_star',
@@ -478,6 +479,149 @@ def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, 'value') else value
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _true_range(work: pd.DataFrame) -> pd.Series:
+    """True range: max(H-L, |H-PDC|, |PDC-L|)."""
+    high = pd.to_numeric(work["High"], errors="coerce")
+    low = pd.to_numeric(work["Low"], errors="coerce")
+    close = pd.to_numeric(work["Close"], errors="coerce")
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (prev_close - low).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return tr
+
+
+def _compute_n(work: pd.DataFrame, window: int = 20) -> Optional[float]:
+    """Turtle N ≈ ATR of true range over ``window`` bars. Soft-fail None."""
+    try:
+        if work is None or len(work) < window + 1:
+            return None
+        tr = _true_range(work)
+        atr = tr.rolling(window=window).mean()
+        val = atr.iloc[-1]
+        if pd.isna(val) or float(val) <= 0:
+            return None
+        return float(val)
+    except Exception:
+        return None
+
+
+def _adaptive_turtle_trend_ok(work: pd.DataFrame) -> Tuple[bool, str]:
+    """Adaptive Turtle trend filter: MA50>MA300 if enough bars, else MA20>MA55."""
+    try:
+        close = pd.to_numeric(work["Close"], errors="coerce")
+        n = len(close.dropna())
+        if n >= 300:
+            ma50 = close.rolling(50).mean().iloc[-1]
+            ma300 = close.rolling(300).mean().iloc[-1]
+            if pd.isna(ma50) or pd.isna(ma300):
+                return False, "ma50_ma300"
+            return bool(float(ma50) > float(ma300)), "ma50_ma300"
+        if n >= 55:
+            ma20 = close.rolling(20).mean().iloc[-1]
+            ma55 = close.rolling(55).mean().iloc[-1]
+            if pd.isna(ma20) or pd.isna(ma55):
+                return False, "ma20_ma55"
+            return bool(float(ma20) > float(ma55)), "ma20_ma55"
+        return False, "insufficient"
+    except Exception:
+        return False, "error"
+
+
+def _s1_last_breakout_was_winner(
+    work: pd.DataFrame,
+    n_value: Optional[float] = None,
+) -> bool:
+    """True if the most recent *completed* S1 (20d) breakout was a winner.
+
+    Completed = reached winner target or hit 10d-low exit after the breakout bar.
+    Winner: high reaches entry + max(0.5·N, 2% of entry) before that exit.
+    Soft-fail False.
+    """
+    try:
+        if work is None or len(work) < 35:
+            return False
+        high = pd.to_numeric(work["High"], errors="coerce")
+        low = pd.to_numeric(work["Low"], errors="coerce")
+        entry20 = high.rolling(20).max()
+        exit10 = low.rolling(10).min()
+        breakout_idx: List[int] = []
+        # Exclude last bar — current signal may still be open.
+        for i in range(20, len(work) - 1):
+            prior = entry20.iloc[i - 1]
+            if pd.isna(prior) or pd.isna(high.iloc[i]):
+                continue
+            if float(high.iloc[i]) > float(prior):
+                breakout_idx.append(i)
+        if not breakout_idx:
+            return False
+
+        for bi in reversed(breakout_idx):
+            entry_level = float(entry20.iloc[bi - 1])
+            if entry_level <= 0:
+                continue
+            n = float(n_value) if n_value and n_value > 0 else None
+            if n is not None:
+                target = entry_level + 0.5 * n
+            else:
+                target = entry_level * 1.02
+            completed = False
+            won = False
+            for j in range(bi + 1, len(work)):
+                if not pd.isna(high.iloc[j]) and float(high.iloc[j]) >= target:
+                    won = True
+                    completed = True
+                    break
+                prior_exit = exit10.iloc[j - 1] if j - 1 >= 0 else None
+                if prior_exit is not None and not pd.isna(prior_exit):
+                    if float(low.iloc[j]) < float(prior_exit):
+                        completed = True
+                        won = False
+                        break
+            if completed:
+                return won
+        return False
+    except Exception:
+        return False
+
+
+def _turtle_score_delta(
+    *,
+    s1_breakout: bool,
+    s2_breakout: bool,
+    turtle_trend_ok: bool,
+    s1_last_was_winner: bool,
+) -> float:
+    """Bounded Turtle-aware contribution to potential_score."""
+    use_trend = _env_flag("HSI_TURTLE_TREND_FILTER", True)
+    use_skip = _env_flag("HSI_TURTLE_S1_SKIP_WINNER", True)
+    delta = 0.0
+    any_bo = s1_breakout or s2_breakout
+    if use_trend and any_bo:
+        delta += 8.0 if turtle_trend_ok else -8.0
+    if use_trend and s2_breakout and turtle_trend_ok:
+        delta += 6.0
+    if use_skip and s1_breakout and s1_last_was_winner:
+        delta -= 10.0
+    return max(-18.0, min(18.0, delta))
+
+
 def _rsi_macd_indicator_score(technicals: Optional[Dict[str, Any]]) -> float:
     """Bounded RSI/MACD contribution to potential_score (−12 … +12). Soft-fail to 0."""
     tech = technicals or {}
@@ -593,6 +737,19 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     entry20_value = float(entry20.iloc[-1])
     entry55_value = float(entry55.iloc[-1])
 
+    n_value = _compute_n(work, window=20)
+    turtle_trend_ok, turtle_trend_rule = _adaptive_turtle_trend_ok(work)
+    s1_last_was_winner = _s1_last_breakout_was_winner(work, n_value=n_value)
+    s1_entry_allowed = bool(s1_breakout and not s1_last_was_winner)
+
+    prior_entry20 = entry20.shift(1).iloc[-1]
+    breakout_extension_n = None
+    if n_value and n_value > 0 and not pd.isna(prior_entry20):
+        breakout_extension_n = (float(work['High'].iloc[-1]) - float(prior_entry20)) / n_value
+    stop_long_2n = None
+    if n_value and n_value > 0:
+        stop_long_2n = close_value - 2.0 * n_value
+
     w_bottom = _detect_w_bottom(work['High'], work['Low'], work['Close'])
     m_top = _detect_m_top(work['High'], work['Low'], work['Close'])
     double_bottom = w_bottom
@@ -635,6 +792,12 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     )
     technicals = _attach_trend_technicals(work)
     rsi_macd_score = _rsi_macd_indicator_score(technicals)
+    turtle_score = _turtle_score_delta(
+        s1_breakout=s1_breakout,
+        s2_breakout=s2_breakout,
+        turtle_trend_ok=turtle_trend_ok,
+        s1_last_was_winner=s1_last_was_winner,
+    )
     potential_score = max(
         0.0,
         min(
@@ -642,6 +805,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
             base_score
             + kline_pattern_score
             + rsi_macd_score
+            + turtle_score
             - min(20.0, s1_gap_pct + s2_gap_pct),
         ),
     )
@@ -669,6 +833,16 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'entry55': round(float(entry55.iloc[-1]), 2),
         'exit10': round(float(exit10.iloc[-1]), 2),
         'exit20': round(float(exit20.iloc[-1]), 2),
+        'n': round(n_value, 4) if n_value is not None else None,
+        'stop_long_2n': round(stop_long_2n, 2) if stop_long_2n is not None else None,
+        'breakout_extension_n': (
+            round(breakout_extension_n, 2) if breakout_extension_n is not None else None
+        ),
+        'turtle_trend_ok': turtle_trend_ok,
+        'turtle_trend_rule': turtle_trend_rule,
+        's1_last_was_winner': s1_last_was_winner,
+        's1_entry_allowed': s1_entry_allowed,
+        'turtle_score': round(turtle_score, 2),
         's1_gap_pct': round(s1_gap_pct, 2),
         's2_gap_pct': round(s2_gap_pct, 2),
         'close_vs_entry': close_vs_entry,
@@ -1267,6 +1441,23 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
             lines.append(f"  - {rsi_line}")
             lines.append(f"  - {macd_line}")
             lines.append(f"  - 形态: {pattern_text}")
+            n_val = m.get("n")
+            stop_2n = m.get("stop_long_2n")
+            ext_n = m.get("breakout_extension_n")
+            trend_ok = m.get("turtle_trend_ok")
+            trend_rule = m.get("turtle_trend_rule") or "暂无"
+            s1_win = m.get("s1_last_was_winner")
+            s1_ok = m.get("s1_entry_allowed")
+            lines.append(
+                f"  - 海龟: N={n_val if n_val is not None else '暂无'}"
+                f", 2N止损参考={stop_2n if stop_2n is not None else '暂无'}"
+                f", 突破延伸N={ext_n if ext_n is not None else '暂无'}"
+            )
+            lines.append(
+                f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
+                f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
+                f" | S1允许开仓: {'是' if s1_ok else '否'}"
+            )
         lines.append("")
     else:
         lines.append("没有股票符合所选条件。\n")
