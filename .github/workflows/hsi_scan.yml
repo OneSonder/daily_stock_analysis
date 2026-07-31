@@ -78,12 +78,12 @@ jobs:
           AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Kimi / Moonshot separate HSI comments (does not replace DeepSeek)
+          # Kimi / Moonshot HSI comments (opt-in; default off — does not replace DeepSeek)
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY || secrets.MOONSHOT_API_KEY }}
           KIMI_BASE_URL: ${{ vars.KIMI_BASE_URL || secrets.KIMI_BASE_URL }}
           KIMI_MODEL: ${{ vars.KIMI_MODEL || secrets.KIMI_MODEL }}
           KIMI_REASONING_EFFORT: ${{ vars.KIMI_REASONING_EFFORT || secrets.KIMI_REASONING_EFFORT }}
-          KIMI_COMMENT_ENABLED: ${{ vars.KIMI_COMMENT_ENABLED || secrets.KIMI_COMMENT_ENABLED }}
+          KIMI_COMMENT_ENABLED: ${{ vars.KIMI_COMMENT_ENABLED || secrets.KIMI_COMMENT_ENABLED || 'false' }}
           ANSPIRE_API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }}
           ANSPIRE_LLM_MODEL: ${{ vars.ANSPIRE_LLM_MODEL || secrets.ANSPIRE_LLM_MODEL }}
           ANSPIRE_LLM_BASE_URL: ${{ vars.ANSPIRE_LLM_BASE_URL || secrets.ANSPIRE_LLM_BASE_URL }}

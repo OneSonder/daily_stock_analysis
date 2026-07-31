@@ -19,6 +19,12 @@ def test_kimi_comment_disabled_without_key(monkeypatch):
     assert generate_kimi_comment({"code": "0700.HK"}, "") == ""
 
 
+def test_kimi_comment_default_off_even_with_key(monkeypatch):
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test")
+    monkeypatch.delenv("KIMI_COMMENT_ENABLED", raising=False)
+    assert is_kimi_comment_enabled() is False
+
+
 def test_kimi_comment_explicitly_disabled(monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "sk-test")
     monkeypatch.setenv("KIMI_COMMENT_ENABLED", "false")

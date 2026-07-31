@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [chore] HSI Kimi 点评默认关闭（`KIMI_COMMENT_ENABLED` 需显式 true 才启用；workflow 默认 false）。
 - [改进] HSI 增强默认改为全部匹配股 + 经济通额外 Top 10（`HSI_ENRICH_TOP_N=all`，`HSI_ENRICH_ETNET_TOP_N=10`）。
 - [改进] HSI 增强分析拆分匹配股与经济通上限：`HSI_ENRICH_TOP_N`（匹配，0/all=全部）与 `HSI_ENRICH_ETNET_TOP_N`（额外 ET Net，0=不加、all=全部），workflow/API 同步。
 - [改进] HSI S1/S2 融入海龟法则：ATR/N、自适应趋势过滤、S1 上次盈利跳过、潜力分加减与报告/LLM 字段（不做实盘仓位）。

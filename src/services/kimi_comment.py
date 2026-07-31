@@ -44,13 +44,10 @@ def get_kimi_model() -> str:
 
 
 def is_kimi_comment_enabled() -> bool:
-    """Enabled when key present, unless KIMI_COMMENT_ENABLED explicitly disables."""
+    """Opt-in: enabled only when KIMI_COMMENT_ENABLED is truthy and a key is set."""
     raw = (os.getenv("KIMI_COMMENT_ENABLED") or "").strip().lower()
-    if raw in {"0", "false", "no", "off"}:
+    if raw not in {"1", "true", "yes", "on"}:
         return False
-    if raw in {"1", "true", "yes", "on"}:
-        return bool(get_kimi_api_key())
-    # default: true when key present
     return bool(get_kimi_api_key())
 
 
