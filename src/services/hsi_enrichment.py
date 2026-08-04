@@ -179,17 +179,34 @@ def select_enrich_targets(
     etnet_top: Optional[Dict[str, Any]] = None,
     top_n: Optional[int] = DEFAULT_ENRICH_TOP_N,
     etnet_top_n: Optional[int] = DEFAULT_ENRICH_ETNET_TOP_N,
+    holdings: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Combine score-ranked matches with ET Net movers under separate caps.
+    """Combine holdings + score-ranked matches + ET Net movers under separate caps.
 
-    - Matches: capped by ``top_n`` (``HSI_ENRICH_TOP_N``)
-    - ET Net extras: unique codes not already selected, capped by ``etnet_top_n``
-      (``HSI_ENRICH_ETNET_TOP_N``)
+    Holdings are always prepended (deduped). Matches use ``top_n``;
+    ET Net extras use ``etnet_top_n``.
     """
-    selected = select_top_matches(matches, top_n=top_n)
-    for item in selected:
-        item.setdefault("enrich_source", "match")
-    seen = {str(m.get("code") or "").strip().upper() for m in selected if m.get("code")}
+    selected: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    for h in holdings or []:
+        code = str(h.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        item = dict(h)
+        item.setdefault("enrich_source", "holding")
+        item["is_holding"] = True
+        selected.append(item)
+        seen.add(code)
+
+    for item in select_top_matches(matches, top_n=top_n):
+        code = str(item.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        row = dict(item)
+        row.setdefault("enrich_source", "match")
+        selected.append(row)
+        seen.add(code)
 
     match_by_code = {
         str(m.get("code") or "").strip().upper(): m
@@ -354,7 +371,24 @@ def build_lite_context(
         "s1_last_was_winner": match.get("s1_last_was_winner"),
         "s1_entry_allowed": match.get("s1_entry_allowed"),
         "turtle_score": match.get("turtle_score"),
+        "turtle_action": match.get("turtle_action"),
+        "turtle_action_reason": match.get("turtle_action_reason"),
+        "stop_from_entry_2n": match.get("stop_from_entry_2n"),
+        "add_level_05n": match.get("add_level_05n"),
     }
+
+    holding_ctx = None
+    if match.get("is_holding") or match.get("buy_price") is not None:
+        holding_ctx = {
+            "is_holding": True,
+            "buy_price": match.get("buy_price"),
+            "pnl_pct": match.get("pnl_pct"),
+            "turtle_action": match.get("turtle_action"),
+            "turtle_action_reason": match.get("turtle_action_reason"),
+            "stop_from_entry_2n": match.get("stop_from_entry_2n"),
+            "add_level_05n": match.get("add_level_05n"),
+            "distance_to_stop_n": match.get("distance_to_stop_n"),
+        }
 
     technicals = {
         "ma5": match.get("ma5"),
@@ -390,6 +424,21 @@ def build_lite_context(
         "bear_flag": match.get("bear_flag"),
     }
 
+    notes = (
+        "HSI lite enrichment: S1/S2 signals + RSI/MACD/MAs + chart patterns + realtime quote. "
+        "You MUST also comment on news/message flow: fill news_summary (2-4 Chinese sentences) "
+        "and dashboard.intelligence.latest_news / positive_catalysts / risk_alerts from the injected news. "
+        "If no news is provided, set news_summary to「近期无可用新闻」and keep intelligence lists empty. "
+    )
+    if holding_ctx:
+        notes += (
+            "This ticker is a CURRENT HOLDING. Use holding.buy_price / stop_from_entry_2n / "
+            "add_level_05n / turtle_action (sell|keep|buy) as given — do NOT invent stop or add levels. "
+            "In advice and battle_plan, explicitly discuss 持仓 / 止损 / 是否加仓 using turtle_action. "
+            f"Holding={holding_ctx}. "
+        )
+    notes += f"Signals={hsi_signals}; Technicals={technicals}; Patterns={patterns}"
+
     return {
         "code": code,
         "stock_name": name,
@@ -399,15 +448,10 @@ def build_lite_context(
         "yesterday": {},
         "realtime": quote,
         "hsi_signals": hsi_signals,
+        "holding": holding_ctx,
         "technicals": technicals,
         "patterns": patterns,
-        "analysis_notes": (
-            "HSI lite enrichment: S1/S2 signals + RSI/MACD/MAs + chart patterns + realtime quote. "
-            "You MUST also comment on news/message flow: fill news_summary (2-4 Chinese sentences) "
-            "and dashboard.intelligence.latest_news / positive_catalysts / risk_alerts from the injected news. "
-            "If no news is provided, set news_summary to「近期无可用新闻」and keep intelligence lists empty. "
-            f"Signals={hsi_signals}; Technicals={technicals}; Patterns={patterns}"
-        ),
+        "analysis_notes": notes,
     }
 
 
@@ -810,8 +854,10 @@ def build_enriched_report(
     top_n: Optional[int] = DEFAULT_ENRICH_TOP_N,
     etnet_top_n: Optional[int] = DEFAULT_ENRICH_ETNET_TOP_N,
 ) -> str:
-    """Combine full match table with enrichment sections (matches + ET Net movers)."""
+    """Combine full match table with enrichment sections (holdings + matches + ET Net)."""
     parts: List[str] = [format_scan_report(scan_payload).rstrip(), ""]
+    holdings = scan_payload.get("holdings") or []
+    hold_n = len(holdings)
     match_label = (
         "全部匹配股"
         if top_n is None or int(top_n) <= 0
@@ -826,7 +872,8 @@ def build_enriched_report(
             else f"经济通额外 Top {etnet_top_n}"
         )
     )
-    parts.append(f"## 增强分析（{match_label} + {etnet_label}，按潜力分）")
+    hold_label = f"持仓 {hold_n}" if hold_n else "持仓 0"
+    parts.append(f"## 增强分析（{hold_label} + {match_label} + {etnet_label}）")
     parts.append("")
 
     if not enrichments:
@@ -834,6 +881,7 @@ def build_enriched_report(
         parts.append("")
         return "\n".join(parts)
 
+    action_label = {"sell": "卖出", "keep": "持有", "buy": "加仓"}
     for idx, item in enumerate(enrichments, 1):
         code = item.get("code")
         name = item.get("name")
@@ -845,6 +893,7 @@ def build_enriched_report(
             "etnet": "经济通",
             "etnet+match": "经济通 + 匹配",
             "match": "匹配",
+            "holding": "持仓",
         }.get(str(source), str(source))
         parts.append(f"## {idx}. {name} ({code})")
         parts.append("")
@@ -852,6 +901,17 @@ def build_enriched_report(
             f"- 来源: {source_label} | 潜力分: {score} | 档位: {tier} "
             f"| RSI/MACD分: {match.get('rsi_macd_score')}"
         )
+        if match.get("is_holding") or match.get("buy_price") is not None:
+            act = match.get("turtle_action") or "keep"
+            parts.append(
+                f"- 持仓止损参考: 成本={match.get('buy_price')} "
+                f"| 建议=**{action_label.get(str(act), act)}** "
+                f"| 2N止损={match.get('stop_from_entry_2n')} "
+                f"| 加仓½N={match.get('add_level_05n')} "
+                f"| 盈亏%={match.get('pnl_pct')}"
+            )
+            if match.get("turtle_action_reason"):
+                parts.append(f"- 依据: {match.get('turtle_action_reason')}")
         parts.append("")
         parts.append(format_quote_section(item.get("quote"), item.get("quote_error")))
         parts.append(format_technical_section(match))
@@ -951,6 +1011,7 @@ def run_hsi_scan_enriched(
         etnet_top=payload.get("etnet_top"),
         top_n=resolved_top_n,
         etnet_top_n=resolved_etnet_top_n,
+        holdings=payload.get("holdings") or [],
     )
 
     active_fetcher = fetcher if fetcher is not None else _default_fetcher()

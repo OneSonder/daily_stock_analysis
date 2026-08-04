@@ -384,7 +384,7 @@ def test_build_enriched_report_contains_section_headings():
         }
     ]
     report = build_enriched_report(scan_payload, enrichments, top_n=None, etnet_top_n=None)
-    assert "增强分析（全部匹配股 + 全部经济通，按潜力分）" in report
+    assert "增强分析（持仓 0 + 全部匹配股 + 全部经济通）" in report
     assert "多数据源行情" in report
     assert "技术指标与形态" in report
     assert "RSI" in report or "rsi" in report.lower() or "MA20" in report
@@ -399,7 +399,7 @@ def test_build_enriched_report_contains_section_headings():
     capped = build_enriched_report(
         scan_payload, enrichments, top_n=5, etnet_top_n=3
     )
-    assert "增强分析（匹配股 Top 5 + 经济通额外 Top 3，按潜力分）" in capped
+    assert "增强分析（持仓 0 + 匹配股 Top 5 + 经济通额外 Top 3）" in capped
 
 def test_format_technical_section_renders_indicators():
     text = format_technical_section(
@@ -579,6 +579,6 @@ def test_run_hsi_scan_enriched_saves_report(mock_scan, tmp_path: Path):
     assert path.exists()
     text = path.read_text(encoding="utf-8")
     assert "多数据源行情" in text
-    assert "增强分析（匹配股 Top 1 + 经济通额外 Top 1，按潜力分）" in text
+    assert "增强分析（持仓 0 + 匹配股 Top 1 + 经济通额外 Top 1）" in text
     assert "来源: 匹配" in text or "来源: 经济通" in text
     assert "2513.HK" in text

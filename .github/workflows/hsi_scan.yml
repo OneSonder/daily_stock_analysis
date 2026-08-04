@@ -29,6 +29,11 @@ on:
         required: false
         default: '10'
         type: string
+      holdings:
+        description: 'Optional holdings override (e.g. 9988.HK 125.50). Empty = use secret HSI_HOLDINGS'
+        required: false
+        default: ''
+        type: string
 
 env:
   PYTHONUNBUFFERED: '1'
@@ -107,6 +112,8 @@ jobs:
           LONGBRIDGE_APP_SECRET: ${{ secrets.LONGBRIDGE_APP_SECRET }}
           LONGBRIDGE_ACCESS_TOKEN: ${{ secrets.LONGBRIDGE_ACCESS_TOKEN }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+          # Holdings (secret preferred; workflow_dispatch input overrides when non-empty)
+          HSI_HOLDINGS: ${{ inputs.holdings || secrets.HSI_HOLDINGS }}
         run: |
           if [ -n "$LITELLM_CONFIG_YAML" ] && [ -n "$LITELLM_CONFIG" ]; then
             mkdir -p "$(dirname "$LITELLM_CONFIG")"
@@ -141,6 +148,7 @@ jobs:
           enrichments = result.get("enrichments") or []
           print(json.dumps(payload.get("stats") or {}, indent=2))
           print(f"Matched: {len(payload.get('matches') or [])} stocks")
+          print(f"Holdings: {len(payload.get('holdings') or [])}")
           print(
               "Enriched: "
               f"{len(enrichments)} "

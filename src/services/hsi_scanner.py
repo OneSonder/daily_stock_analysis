@@ -622,6 +622,173 @@ def _turtle_score_delta(
     return max(-18.0, min(18.0, delta))
 
 
+def turtle_holding_action(
+    signal: Dict[str, Any],
+    buy_price: float,
+) -> Dict[str, Any]:
+    """Turtle-inspired long holding advice: sell / keep / buy(add).
+
+    - sell: price or low at/below entry−2N, or S1/S2 opposite-breakout exit
+    - buy: not sell, trend OK, price ≥ entry+0.5N (pyramid add)
+    - keep: held otherwise
+    """
+    try:
+        b = float(buy_price)
+    except (TypeError, ValueError):
+        return {
+            "turtle_action": "keep",
+            "turtle_action_reason": "成本价无效",
+            "stop_from_entry_2n": None,
+            "add_level_05n": None,
+            "pnl_pct": None,
+            "distance_to_stop_n": None,
+        }
+
+    close = signal.get("close")
+    low = signal.get("low")
+    n_raw = signal.get("n")
+    try:
+        c = float(close) if close is not None else None
+    except (TypeError, ValueError):
+        c = None
+    try:
+        l = float(low) if low is not None else None
+    except (TypeError, ValueError):
+        l = None
+    try:
+        n = float(n_raw) if n_raw is not None and float(n_raw) > 0 else None
+    except (TypeError, ValueError):
+        n = None
+
+    stop = round(b - 2.0 * n, 4) if n is not None else None
+    add_level = round(b + 0.5 * n, 4) if n is not None else None
+    pnl_pct = round(((c - b) / b) * 100.0, 2) if c is not None and b > 0 else None
+    distance_to_stop_n = None
+    if n is not None and stop is not None and c is not None:
+        distance_to_stop_n = round((c - stop) / n, 2)
+
+    s1_exit = bool(signal.get("s1_exit"))
+    s2_exit = bool(signal.get("s2_exit"))
+    trend_ok = bool(signal.get("turtle_trend_ok"))
+
+    hit_stop = False
+    if stop is not None:
+        if l is not None and l <= stop:
+            hit_stop = True
+        elif c is not None and c <= stop:
+            hit_stop = True
+
+    if hit_stop or s1_exit or s2_exit:
+        reasons = []
+        if hit_stop:
+            reasons.append(f"触及入场2N止损({stop})")
+        if s1_exit:
+            reasons.append("S1退出(跌破10日低)")
+        if s2_exit:
+            reasons.append("S2退出(跌破20日低)")
+        return {
+            "turtle_action": "sell",
+            "turtle_action_reason": "；".join(reasons),
+            "stop_from_entry_2n": stop,
+            "add_level_05n": add_level,
+            "pnl_pct": pnl_pct,
+            "distance_to_stop_n": distance_to_stop_n,
+        }
+
+    if (
+        trend_ok
+        and add_level is not None
+        and c is not None
+        and c >= add_level
+    ):
+        return {
+            "turtle_action": "buy",
+            "turtle_action_reason": f"趋势过滤通过且现价≥入场+0.5N加仓位({add_level})",
+            "stop_from_entry_2n": stop,
+            "add_level_05n": add_level,
+            "pnl_pct": pnl_pct,
+            "distance_to_stop_n": distance_to_stop_n,
+        }
+
+    return {
+        "turtle_action": "keep",
+        "turtle_action_reason": "持仓中：未触发止损/退出，亦未达½N加仓",
+        "stop_from_entry_2n": stop,
+        "add_level_05n": add_level,
+        "pnl_pct": pnl_pct,
+        "distance_to_stop_n": distance_to_stop_n,
+    }
+
+
+def attach_holdings_to_results(
+    holdings: List[Dict[str, Any]],
+    results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Join holdings with scan signal rows and Turtle action fields."""
+    by_code = {
+        str(r.get("code") or "").strip().upper(): r
+        for r in (results or [])
+        if r and r.get("code")
+    }
+    attached: List[Dict[str, Any]] = []
+    for h in holdings or []:
+        code = str(h.get("code") or "").strip().upper()
+        if not code:
+            continue
+        buy_price = h.get("buy_price")
+        base = by_code.get(code)
+        if base and base.get("status") == "ok":
+            row = dict(base)
+        elif base:
+            row = {
+                "code": code,
+                "name": base.get("name") or code,
+                "status": base.get("status") or "unavailable",
+                "message": base.get("message"),
+                "url": base.get("url") or f"https://finance.yahoo.com/quote/{code}",
+                "close": base.get("close"),
+                "low": base.get("low"),
+                "n": base.get("n"),
+            }
+        else:
+            row = {
+                "code": code,
+                "name": code,
+                "status": "missing",
+                "message": "not in scan results",
+                "url": f"https://finance.yahoo.com/quote/{code}",
+            }
+        row["buy_price"] = buy_price
+        row["is_holding"] = True
+        row["enrich_source"] = "holding"
+        action = turtle_holding_action(row, float(buy_price) if buy_price is not None else 0.0)
+        row.update(action)
+        attached.append(row)
+    return attached
+
+
+def merge_stocks_with_holdings(
+    base: List[Dict[str, str]],
+    holdings: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, str]], int]:
+    """Append holding codes not already in the universe."""
+    seen = {
+        str(s.get("code") or "").strip().upper()
+        for s in (base or [])
+        if s.get("code")
+    }
+    merged = list(base or [])
+    extra = 0
+    for h in holdings or []:
+        code = str(h.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        merged.append({"code": code, "name": code})
+        extra += 1
+    return merged, extra
+
+
 def _rsi_macd_indicator_score(technicals: Optional[Dict[str, Any]]) -> float:
     """Bounded RSI/MACD contribution to potential_score (−12 … +12). Soft-fail to 0."""
     tech = technicals or {}
@@ -1123,6 +1290,7 @@ def scan_stocks(
     if check_trading_day and not is_hk_market_open():
         return {
             'matches': [],
+            'results': [],
             'no_price': [],
             'stats': {'tickers': len(stocks), 'max_workers': max_workers, 'total_ms': 0},
             'skipped': True,
@@ -1208,9 +1376,11 @@ def scan_stocks(
         if r.get('status') == 'ok' and any(r.get(cond) for cond in wanted)
     ]
     no_price = [r for r in results if r.get('status') == 'empty']
+    ok_results = [r for r in results if r and r.get('status') == 'ok']
 
     return {
         'matches': matches,
+        'results': ok_results,
         'no_price': no_price,
         'stats': {
             'tickers': len(stocks),
@@ -1265,6 +1435,26 @@ def scan_hsi(
         "errors": {},
         "merged_extra": 0,
     }
+    holdings_meta: Dict[str, Any] = {
+        "count": 0,
+        "merged_extra": 0,
+        "source": None,
+    }
+    holdings_list: List[Dict[str, Any]] = []
+    try:
+        from src.services.hsi_holdings import load_holdings_from_env
+
+        holdings_list = load_holdings_from_env()
+        holdings_meta["count"] = len(holdings_list)
+        if holdings_list:
+            holdings_meta["source"] = "env"
+            stocks, holdings_extra = merge_stocks_with_holdings(stocks, holdings_list)
+            holdings_meta["merged_extra"] = holdings_extra
+    except Exception as exc:
+        logger.warning("HSI holdings merge skipped: %s", exc)
+        holdings_meta["errors"] = str(exc)
+        holdings_list = []
+
     try:
         from src.services.etnet_top_movers import (
             fetch_etnet_top_boards,
@@ -1305,6 +1495,13 @@ def scan_hsi(
         use_multi_source=use_multi_source,
     )
     payload["etnet_top"] = etnet_meta
+    payload["holdings_meta"] = holdings_meta
+    if payload.get("skipped"):
+        payload["holdings"] = []
+    else:
+        # Prefer all ok results; fall back to matches for older callers.
+        scan_rows = payload.get("results") or payload.get("matches") or []
+        payload["holdings"] = attach_holdings_to_results(holdings_list, scan_rows)
     return payload
 
 
@@ -1382,6 +1579,44 @@ def _format_etnet_top_section(etnet_top: Optional[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def _format_holdings_section(holdings: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Render 持仓止损参考 table (Turtle sell/keep/buy)."""
+    rows = list(holdings or [])
+    if not rows:
+        return []
+    action_label = {"sell": "卖出", "keep": "持有", "buy": "加仓"}
+    lines: List[str] = [
+        f"## 持仓止损参考（{len(rows)}）\n",
+        "| 代号 | 名称 | 成本 | 现价 | 盈亏% | 2N止损 | 加仓½N | 建议 | 依据 |",
+        "|------|------|------|------|-------|--------|--------|------|------|",
+    ]
+    for m in rows:
+        code = m.get("code") or ""
+        name = m.get("name") or code
+        buy = m.get("buy_price")
+        close = m.get("close")
+        pnl = m.get("pnl_pct")
+        stop = m.get("stop_from_entry_2n")
+        add_lv = m.get("add_level_05n")
+        action = m.get("turtle_action") or "keep"
+        reason = (m.get("turtle_action_reason") or "").replace("|", "/")
+        status = m.get("status")
+        if status and status != "ok":
+            reason = reason or f"信号不可用({status})"
+        lines.append(
+            f"| [{code}]({m.get('url', '')}) | {name} "
+            f"| {buy if buy is not None else '暂无'} "
+            f"| {close if close is not None else '暂无'} "
+            f"| {pnl if pnl is not None else '暂无'} "
+            f"| {stop if stop is not None else '暂无'} "
+            f"| {add_lv if add_lv is not None else '暂无'} "
+            f"| {action_label.get(str(action), str(action))} "
+            f"| {reason} |"
+        )
+    lines.append("")
+    return lines
+
+
 def format_scan_report(payload: Dict[str, Any]) -> str:
     lines = []
     matches = payload.get('matches', [])
@@ -1400,6 +1635,7 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     )
     lines.append(f"*扫描时间：{timestamp}*\n")
     lines.extend(_format_etnet_top_section(payload.get("etnet_top")))
+    lines.extend(_format_holdings_section(payload.get("holdings")))
 
     if matches:
         lines.append(f"## 匹配结果（{len(matches)}）\n")
