@@ -18,7 +18,7 @@ from src.services.hsi_scanner import (
 
 logger = logging.getLogger(__name__)
 
-# Default enrich caps. Match: None/0/all = unlimited. ET Net: 0 = none.
+# Default enrich caps. Match: None/all = all; 0 = none. ET Net: 0 = none.
 DEFAULT_ENRICH_TOP_N: Optional[int] = None  # all matches
 DEFAULT_ENRICH_ETNET_TOP_N: int = 10
 
@@ -29,16 +29,21 @@ def _resolve_enrich_cap(
     env_key: str,
     default: Optional[int],
 ) -> Optional[int]:
-    """Resolve a match-style enrich cap from arg or env.
+    """Resolve match enrich cap from arg or env.
 
-    Returns ``None`` for unlimited (``0`` / ``all`` / unset when default is None).
+    Returns ``None`` for all matches (``all`` / unset default).
+    ``0`` means no match enrich targets.
     """
     if value is not None:
         try:
             n = int(value)
         except (TypeError, ValueError):
             return default
-        return None if n <= 0 else n
+        if n == 0:
+            return 0
+        if n < 0:
+            return default
+        return n
 
     raw = (os.getenv(env_key) or "").strip()
     if not raw:
@@ -50,7 +55,11 @@ def _resolve_enrich_cap(
     except (TypeError, ValueError):
         logger.warning("Invalid %s=%r, fallback to %s", env_key, raw, default)
         return default
-    return None if n <= 0 else n
+    if n == 0:
+        return 0
+    if n < 0:
+        return default
+    return n
 
 
 def resolve_enrich_top_n(top_n: Optional[int] = None) -> Optional[int]:
@@ -110,7 +119,7 @@ def select_top_matches(
         return ranked
     n = int(top_n)
     if n <= 0:
-        return ranked
+        return []
     return ranked[:n]
 
 
@@ -860,8 +869,12 @@ def build_enriched_report(
     hold_n = len(holdings)
     match_label = (
         "全部匹配股"
-        if top_n is None or int(top_n) <= 0
-        else f"匹配股 Top {top_n}"
+        if top_n is None
+        else (
+            "匹配股 0"
+            if int(top_n) <= 0
+            else f"匹配股 Top {top_n}"
+        )
     )
     etnet_label = (
         "全部经济通"

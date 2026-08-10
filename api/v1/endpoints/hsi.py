@@ -28,11 +28,11 @@ async def hsi_scan(
         False,
         description="When true, enrich matches with quote + news + lite LLM dashboard",
     ),
-    top_n: int = Query(
-        0,
+    top_n: Optional[int] = Query(
+        None,
         ge=0,
         le=100,
-        description="Match enrich cap when enrich=true: 0 = all matches (default); positive = top-N matches",
+        description="Match enrich cap when enrich=true: omit/all = all matches; 0 = none; positive = top-N",
     ),
     etnet_top_n: int = Query(
         10,

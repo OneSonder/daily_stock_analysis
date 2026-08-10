@@ -20,7 +20,7 @@ on:
         default: 's1_breakout,s2_breakout'
         type: string
       top_n:
-        description: 'Match enrich cap (0/all = all matches; default all)'
+        description: 'Match enrich cap (0 = none; all = all matches; default all)'
         required: false
         default: 'all'
         type: string
@@ -128,7 +128,9 @@ jobs:
           from src.services.hsi_enrichment import run_hsi_scan_enriched
 
           raw_top = (os.getenv("HSI_ENRICH_TOP_N") or "all").strip().lower()
-          if raw_top in {"", "0", "all"}:
+          if raw_top in {"", "all"}:
+              enrich_top_n = None
+          elif raw_top == "0":
               enrich_top_n = 0
           else:
               enrich_top_n = int(raw_top)

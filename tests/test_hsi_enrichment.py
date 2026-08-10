@@ -35,12 +35,7 @@ def test_select_top_matches_orders_by_potential_score():
     assert [m["code"] for m in top] == ["B", "C"]
     all_ranked = select_top_matches(matches, top_n=None)
     assert [m["code"] for m in all_ranked] == ["B", "C", "A", "D"]
-    assert [m["code"] for m in select_top_matches(matches, top_n=0)] == [
-        "B",
-        "C",
-        "A",
-        "D",
-    ]
+    assert [m["code"] for m in select_top_matches(matches, top_n=0)] == []
 
 
 def test_select_enrich_targets_includes_etnet_capped_by_top_n():
@@ -106,13 +101,13 @@ def test_resolve_enrich_top_n_from_env(monkeypatch):
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "3")
     assert resolve_enrich_top_n() == 3
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "0")
-    assert resolve_enrich_top_n() is None
+    assert resolve_enrich_top_n() == 0
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "all")
     assert resolve_enrich_top_n() is None
     monkeypatch.setenv("HSI_ENRICH_TOP_N", "bad")
     assert resolve_enrich_top_n() is None  # default = all
     assert resolve_enrich_top_n(7) == 7
-    assert resolve_enrich_top_n(0) is None
+    assert resolve_enrich_top_n(0) == 0
     monkeypatch.delenv("HSI_ENRICH_TOP_N", raising=False)
     assert resolve_enrich_top_n() is None  # default = all
 
