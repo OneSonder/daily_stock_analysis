@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Parse HSI holdings (code + buy price) from env / local file.
 
-Primary source for Actions: ``HSI_HOLDINGS`` secret → env.
+Primary source for Actions: ``HSI_HOLDINGS`` repo variable → env.
 Local/dev may also use ``HSI_HOLDINGS_FILE``.
 
 Formats (per line or comma-separated):
