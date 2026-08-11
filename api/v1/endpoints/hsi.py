@@ -26,7 +26,10 @@ async def hsi_scan(
     output: str = Query("json", description="Output format: json, markdown"),
     enrich: bool = Query(
         False,
-        description="When true, enrich matches with quote + news + lite LLM dashboard",
+        description=(
+            "When true, enrich matches with quote, news, a DeepSeek decision dashboard, "
+            "and optional Gemini/Kimi commentary"
+        ),
     ),
     top_n: Optional[int] = Query(
         None,

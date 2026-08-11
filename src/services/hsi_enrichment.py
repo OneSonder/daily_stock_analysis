@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -464,6 +466,22 @@ def build_lite_context(
     }
 
 
+def _format_hsi_dashboard_context(context: Dict[str, Any]) -> str:
+    """Expose HSI-only signals that the generic analyzer prompt does not render."""
+    payload = {
+        "hsi_signals": context.get("hsi_signals") or {},
+        "holding": context.get("holding"),
+        "technicals": context.get("technicals") or {},
+        "patterns": context.get("patterns") or {},
+        "analysis_notes": context.get("analysis_notes") or "",
+    }
+    return (
+        "\n## HSI 扫描专用上下文（必须纳入决策）\n"
+        "以下数据来自本次扫描，不得忽略或用模型记忆替代：\n"
+        f"```json\n{json.dumps(payload, ensure_ascii=False, indent=2, default=str)}\n```\n"
+    )
+
+
 def format_quote_section(quote: Optional[Dict[str, Any]], error: Optional[str] = None) -> str:
     lines = ["### 多数据源行情", ""]
     if error:
@@ -692,6 +710,30 @@ def format_kimi_comment_section(comment: str = "", error: Optional[str] = None) 
     return "\n".join(lines)
 
 
+def format_gemini_comment_section(comment: str = "", error: Optional[str] = None) -> str:
+    """Format the optional Gemini commentary independently of the dashboard."""
+    lines = [
+        "### Gemini 独立点评",
+        "",
+        "> 来源: **Gemini**（可选独立点评 LLM，与 DeepSeek 仪表盘及 Kimi 点评分开）",
+        "",
+    ]
+    text = (comment or "").strip()
+    if text:
+        body_lines = text.splitlines()
+        if not any(line.strip().startswith("[Gemini]") for line in body_lines[:3]):
+            lines.append("[Gemini]")
+        lines.extend(body_lines)
+        lines.append("")
+        return "\n".join(lines)
+    if error:
+        lines.append(f"- [Gemini] 点评不可用: {error}")
+    else:
+        lines.append("- [Gemini] 未生成点评")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _service_available(obj: Any, default: bool = False) -> bool:
     if obj is None:
         return False
@@ -725,6 +767,8 @@ def enrich_match(
         "analysis_error": None,
         "kimi_comment": "",
         "kimi_comment_error": None,
+        "gemini_comment": "",
+        "gemini_comment_error": None,
     }
 
     quote_dict: Optional[Dict[str, Any]] = None
@@ -823,7 +867,11 @@ def enrich_match(
                 deepseek_news,
                 max_age_days=max_age_days,
             )
-            analysis = analyzer.analyze(context, news_context=news_for_llm)
+            analysis = analyzer.analyze(
+                context,
+                news_context=news_for_llm,
+                analysis_context_pack_summary=_format_hsi_dashboard_context(context),
+            )
             result["analysis"] = analysis
             if analysis is not None and getattr(analysis, "success", True) is False:
                 result["analysis_error"] = getattr(analysis, "error_message", None) or "analyze failed"
@@ -853,6 +901,31 @@ def enrich_match(
     except Exception as exc:
         result["kimi_comment_error"] = str(exc)
         logger.warning("HSI enrich Kimi comment failed for %s: %s", code, exc)
+
+    # Separate Gemini commentary (opt-in; does not replace DeepSeek or Kimi).
+    try:
+        from src.services.gemini_comment import (
+            generate_gemini_comment,
+            is_gemini_comment_enabled,
+        )
+
+        if is_gemini_comment_enabled():
+            if context is None:
+                context = build_lite_context(match, quote_dict)
+            comment = generate_gemini_comment(
+                context,
+                deepseek_news or result.get("news_text") or "",
+            )
+            if comment:
+                result["gemini_comment"] = comment
+                result["gemini_comment_error"] = None
+            else:
+                result["gemini_comment_error"] = "empty or failed Gemini comment"
+        else:
+            result["gemini_comment_error"] = "gemini comment disabled or no API key"
+    except Exception as exc:
+        result["gemini_comment_error"] = str(exc)
+        logger.warning("HSI enrich Gemini comment failed for %s: %s", code, exc)
 
     return result
 
@@ -936,6 +1009,12 @@ def build_enriched_report(
                 item.get("kimi_comment_error"),
             )
         )
+        parts.append(
+            format_gemini_comment_section(
+                item.get("gemini_comment") or "",
+                item.get("gemini_comment_error"),
+            )
+        )
 
     return "\n".join(parts).rstrip() + "\n"
 
@@ -970,10 +1049,41 @@ def _default_search():
 def _default_analyzer():
     try:
         from src.analyzer import GeminiAnalyzer
+        from src.config import get_config
 
-        return GeminiAnalyzer()
+        base_config = get_config()
+        deepseek_keys = list(base_config.deepseek_api_keys or [])
+        if not deepseek_keys:
+            logger.warning("HSI DeepSeek dashboard disabled: DEEPSEEK_API_KEY(S) not configured")
+            return None
+
+        default_model = "deepseek/deepseek-v4-flash"
+        configured_model = (os.getenv("HSI_DEEPSEEK_MODEL") or default_model).strip()
+        if "/" not in configured_model:
+            configured_model = f"deepseek/{configured_model}"
+        if not configured_model.startswith("deepseek/"):
+            logger.warning(
+                "Invalid HSI_DEEPSEEK_MODEL=%r; forcing %s",
+                configured_model,
+                default_model,
+            )
+            configured_model = default_model
+
+        # HSI dashboard provider is intentionally isolated from app-wide
+        # channels/YAML/fallbacks so the DeepSeek label always matches reality.
+        deepseek_config = replace(
+            base_config,
+            litellm_model=configured_model,
+            litellm_fallback_models=[],
+            litellm_config_path=None,
+            llm_models_source="hsi_deepseek",
+            llm_channels=[],
+            llm_model_list=[],
+            deepseek_api_keys=deepseek_keys,
+        )
+        return GeminiAnalyzer(config=deepseek_config)
     except Exception as exc:
-        logger.warning("GeminiAnalyzer init failed: %s", exc)
+        logger.warning("HSI DeepSeek analyzer init failed: %s", exc)
         return None
 
 

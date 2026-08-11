@@ -8,10 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.services.hsi_enrichment import (
+    _default_analyzer,
     build_enriched_report,
     build_lite_context,
     enrich_match,
     format_dashboard_section,
+    format_gemini_comment_section,
     format_kimi_comment_section,
     format_news_section,
     format_quote_section,
@@ -199,6 +201,9 @@ def test_enrich_match_passes_news_comment_instruction_to_deepseek():
     assert "news_summary" in news_ctx
     assert "腾讯发布新品" in news_ctx
     assert args[0].get("news_window_days") == 2
+    hsi_context = kwargs.get("analysis_context_pack_summary") or ""
+    assert "HSI 扫描专用上下文" in hsi_context
+    assert "hsi_signals" in hsi_context
 
 
 def test_enrich_match_partial_failure_resilience():
@@ -376,6 +381,8 @@ def test_build_enriched_report_contains_section_headings():
             "analysis_error": None,
             "kimi_comment": "Kimi：短线关注回踩支撑。",
             "kimi_comment_error": None,
+            "gemini_comment": "Gemini：突破有效但需防回撤。",
+            "gemini_comment_error": None,
         }
     ]
     report = build_enriched_report(scan_payload, enrichments, top_n=None, etnet_top_n=None)
@@ -389,6 +396,9 @@ def test_build_enriched_report_contains_section_headings():
     assert "Kimi 独立点评" in report
     assert "来源: **Kimi / Moonshot**" in report
     assert "短线关注回踩支撑" in report
+    assert "Gemini 独立点评" in report
+    assert "来源: **Gemini**" in report
+    assert "突破有效但需防回撤" in report
     assert "腾讯" in report
     assert "401" in report
     capped = build_enriched_report(
@@ -421,6 +431,11 @@ def test_format_sections_with_errors():
     assert "Kimi 独立点评" in labeled
     assert "[Kimi]" in labeled
     assert "来源: **Kimi / Moonshot**" in labeled
+    assert "[Gemini] 点评不可用" in format_gemini_comment_section("", "boom")
+    gemini_labeled = format_gemini_comment_section("观点偏多")
+    assert "Gemini 独立点评" in gemini_labeled
+    assert "[Gemini]" in gemini_labeled
+    assert "来源: **Gemini**" in gemini_labeled
     deep = format_dashboard_section(
         SimpleNamespace(
             success=True,
@@ -485,6 +500,62 @@ def test_enrich_match_adds_kimi_comment():
 
     assert result["kimi_comment"] == "独立点评内容"
     assert result["kimi_comment_error"] is None
+
+
+def test_enrich_match_adds_gemini_comment():
+    match = {"code": "0700.HK", "name": "腾讯", "close": 400}
+    fetcher = MagicMock()
+    fetcher.get_realtime_quote.return_value = None
+    search = MagicMock()
+    search.is_available = False
+    analyzer = MagicMock()
+    analyzer.is_available = MagicMock(return_value=False)
+
+    with patch(
+        "src.services.tencent_stock_news.is_tencent_stock_news_enabled",
+        return_value=False,
+    ), patch(
+        "src.services.kimi_comment.is_kimi_comment_enabled",
+        return_value=False,
+    ), patch(
+        "src.services.gemini_comment.is_gemini_comment_enabled",
+        return_value=True,
+    ), patch(
+        "src.services.gemini_comment.generate_gemini_comment",
+        return_value="Gemini 独立点评内容",
+    ):
+        result = enrich_match(match, fetcher=fetcher, search=search, analyzer=analyzer)
+
+    assert result["gemini_comment"] == "Gemini 独立点评内容"
+    assert result["gemini_comment_error"] is None
+
+
+def test_default_analyzer_is_pinned_to_deepseek(monkeypatch):
+    from src.config import Config
+
+    monkeypatch.setenv("HSI_DEEPSEEK_MODEL", "deepseek-v4-flash")
+    base_config = Config(
+        litellm_model="gemini/gemini-3.6-flash",
+        litellm_fallback_models=["gemini/gemini-3.1-pro"],
+        litellm_config_path="litellm.yaml",
+        llm_models_source="llm_channels",
+        llm_channels=[{"name": "gemini"}],
+        llm_model_list=[{"model_name": "gemini/gemini-3.6-flash"}],
+        deepseek_api_keys=["test-deepseek-key"],
+    )
+
+    with patch("src.config.get_config", return_value=base_config), patch(
+        "src.analyzer.GeminiAnalyzer"
+    ) as analyzer_cls:
+        analyzer = _default_analyzer()
+
+    assert analyzer is analyzer_cls.return_value
+    pinned = analyzer_cls.call_args.kwargs["config"]
+    assert pinned.litellm_model == "deepseek/deepseek-v4-flash"
+    assert pinned.litellm_fallback_models == []
+    assert pinned.llm_channels == []
+    assert pinned.llm_model_list == []
+    assert pinned.litellm_config_path is None
 
 
 @patch("src.services.hsi_enrichment.scan_hsi")

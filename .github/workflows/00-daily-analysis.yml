@@ -89,6 +89,9 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
           GEMINI_MODEL_FALLBACK: ${{ vars.GEMINI_MODEL_FALLBACK || secrets.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash' }}
           GEMINI_REQUEST_DELAY: '3.0'
+          # Optional HSI commentary; key remains GEMINI_API_KEY from Repository Secrets above.
+          GEMINI_COMMENT_MODEL: ${{ vars.GEMINI_COMMENT_MODEL || secrets.GEMINI_COMMENT_MODEL || 'gemini-3.6-flash' }}
+          GEMINI_COMMENT_ENABLED: ${{ vars.GEMINI_COMMENT_ENABLED || secrets.GEMINI_COMMENT_ENABLED || 'false' }}
           
           # AIHubMix（优先于 OPENAI_API_KEY，自动适配 base_url，推荐国内用户）
           AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
@@ -102,6 +105,7 @@ jobs:
           # DeepSeek
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_API_KEYS: ${{ secrets.DEEPSEEK_API_KEYS }}
+          HSI_DEEPSEEK_MODEL: ${{ vars.HSI_DEEPSEEK_MODEL || secrets.HSI_DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
           
           # Anthropic / Claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -246,6 +246,10 @@ daily_stock_analysis/
 | `GEMINI_API_KEY` | Google Gemini API Key | - | 可选 |
 | `GEMINI_MODEL` | 主模型名称（legacy，`LITELLM_MODEL` 优先） | `gemini-3.1-pro-preview` | 否 |
 | `GEMINI_MODEL_FALLBACK` | 备选模型（legacy） | `gemini-3-flash-preview` | 否 |
+| `HSI_DEEPSEEK_MODEL` | HSI 增强决策仪表盘的固定 DeepSeek 模型；不继承全局 Channels/YAML/fallback | `deepseek-v4-flash` | 否 |
+| `GEMINI_COMMENT_ENABLED` | HSI Gemini 独立点评开关；需同时配置 `GEMINI_API_KEY` | `false` | 否 |
+| `GEMINI_COMMENT_MODEL` | HSI Gemini 独立点评模型 | `gemini-3.6-flash` | 否 |
+| `KIMI_COMMENT_ENABLED` | HSI Kimi 独立点评开关；需同时配置 `KIMI_API_KEY` 或 `MOONSHOT_API_KEY` | `false` | 否 |
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key | - | 可选 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址 | - | 可选 |
 | `OLLAMA_API_BASE` | Ollama 本地服务地址（如 `http://localhost:11434`），详见 [LLM 配置指南](LLM_CONFIG_GUIDE.md) | - | 可选 |
@@ -256,6 +260,8 @@ daily_stock_analysis/
 | `ANTHROPIC_MAX_TOKENS` | Claude 响应最大 token 数 | `8192` | 可选 |
 
 > *注：`ANSPIRE_API_KEYS`、`AIHUBMIX_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 或 `OLLAMA_API_BASE` 至少配置一个。`ANSPIRE_API_KEYS` 与 `AIHUBMIX_KEY` 无需配置 `OPENAI_BASE_URL`，系统自动适配。
+>
+> HSI 增强报告固定使用 `DEEPSEEK_API_KEY(S)` 生成 DeepSeek 决策仪表盘；Gemini 与 Kimi 是互不替代的可选点评。GitHub Actions 中 `DEEPSEEK_API_KEY(S)`、`GEMINI_API_KEY`、`KIMI_API_KEY` 必须放在 Repository Secrets，开关与模型名可放 Repository Variables。
 
 > 问股 single-agent 路径会在后台为 DeepSeek V4 thinking + tool-call 保存最近 3 条 provider trace，并按原时序回放 `reasoning_content` / tool 结果；该能力不新增配置项，不进入 Web 历史 API，Claude extended thinking 仅覆盖离线 plumbing，multi-agent trace 注入留作后续增强。
 

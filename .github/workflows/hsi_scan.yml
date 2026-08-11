@@ -76,12 +76,17 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL }}
+          # Optional Gemini HSI commentary; reuses GEMINI_API_KEY from Repository Secrets.
+          GEMINI_COMMENT_MODEL: ${{ vars.GEMINI_COMMENT_MODEL || secrets.GEMINI_COMMENT_MODEL || 'gemini-3.6-flash' }}
+          GEMINI_COMMENT_ENABLED: ${{ vars.GEMINI_COMMENT_ENABLED || secrets.GEMINI_COMMENT_ENABLED || 'false' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_KEYS: ${{ secrets.OPENAI_API_KEYS }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
           AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_API_KEYS: ${{ secrets.DEEPSEEK_API_KEYS }}
+          HSI_DEEPSEEK_MODEL: ${{ vars.HSI_DEEPSEEK_MODEL || secrets.HSI_DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Kimi / Moonshot HSI comments (opt-in; default off — does not replace DeepSeek)
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY || secrets.MOONSHOT_API_KEY }}

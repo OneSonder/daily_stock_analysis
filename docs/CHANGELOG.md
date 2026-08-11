@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [修复] HSI 决策仪表盘固定使用 DeepSeek 并隔离全局 LLM Channels/YAML/fallback，确保报告来源标签与实际模型一致。
+- [新功能] HSI 增强新增默认关闭的 Gemini 独立点评（`GEMINI_COMMENT_ENABLED`），与 DeepSeek 仪表盘、Kimi 点评分别执行并独立降级。
+- [文档] 补充 HSI DeepSeek/Gemini/Kimi 配置及 GitHub Actions Repository Secrets 使用说明。
 - [改进] HSI 匹配增强 `top_n=0` / `HSI_ENRICH_TOP_N=0` 改为不加匹配股（`all` 才表示全部）；持仓与经济通上限不变。
 - [改进] HSI 持仓 `HSI_HOLDINGS` 改为 GitHub Actions **变量**（非 secret）；workflow 使用 `vars.HSI_HOLDINGS`。
 - [新功能] HSI 持仓止损参考：从 `HSI_HOLDINGS` 读取成本价，合并扫描并给出 Turtle sell/keep/buy，持仓始终增强并注入 DeepSeek。
