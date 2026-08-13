@@ -1029,11 +1029,45 @@ def save_enriched_report(report_text: str, reports_dir: Optional[Path] = None) -
     return path
 
 
+def _is_a_share_code(code: str) -> bool:
+    """Return whether a code is an explicit Shanghai/Shenzhen A-share symbol."""
+    upper = str(code or "").strip().upper()
+    if not upper.endswith((".SH", ".SS", ".SZ")):
+        return False
+    base = upper.rsplit(".", 1)[0]
+    return len(base) == 6 and base.isdigit()
+
+
+class _MarketAwareQuoteFetcher:
+    """Use Tencent for A-shares while retaining Yahoo as the common fallback."""
+
+    def __init__(self, yahoo_fetcher: Any, tencent_fetcher: Any):
+        self._yahoo_fetcher = yahoo_fetcher
+        self._tencent_fetcher = tencent_fetcher
+
+    def get_realtime_quote(self, code: str):
+        if _is_a_share_code(code):
+            try:
+                quote = self._tencent_fetcher.get_realtime_quote(code, source="tencent")
+                if quote is not None:
+                    return quote
+            except Exception as exc:
+                logger.warning("Tencent A-share quote failed for %s; using Yahoo fallback: %s", code, exc)
+        return self._yahoo_fetcher.get_realtime_quote(code)
+
+
 def _default_fetcher():
-    """Prefer Yahoo Finance for HSI enrichment quotes (avoid AkShare HK disconnects)."""
+    """Prefer Tencent for A-shares and Yahoo for HK/fallback enrichment quotes."""
     from data_provider.yfinance_fetcher import YfinanceFetcher
 
-    return YfinanceFetcher()
+    yahoo_fetcher = YfinanceFetcher()
+    try:
+        from data_provider.akshare_fetcher import AkshareFetcher
+
+        return _MarketAwareQuoteFetcher(yahoo_fetcher, AkshareFetcher())
+    except Exception as exc:
+        logger.warning("Tencent A-share quote fetcher unavailable; using Yahoo only: %s", exc)
+        return yahoo_fetcher
 
 
 def _default_search():

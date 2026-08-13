@@ -9,6 +9,8 @@ Formats (per line or comma-separated):
   9988.HK:125.50
   9988.HK,125.50
   9988 125.50
+  600519.SH 1500.00
+  SZ000001 12.50
 """
 
 from __future__ import annotations
@@ -25,10 +27,12 @@ _PAIR_FIND_RE = re.compile(
     r"(?P<code>[A-Za-z0-9.\-]+)\s*[,: ]\s*(?P<price>-?\d+(?:\.\d+)?)"
 )
 _CODE_DIGITS_RE = re.compile(r"^\d{1,5}$")
+_A_SUFFIX_RE = re.compile(r"^(?P<code>\d{6})\.(?P<exchange>SH|SS|SZ)$")
+_A_PREFIX_RE = re.compile(r"^(?P<exchange>SH|SS|SZ)(?P<code>\d{6})$")
 
 
 def normalize_holding_code(raw: Any) -> Optional[str]:
-    """Normalize to Yahoo/HSI form ``0700.HK``."""
+    """Normalize HK and A-share holdings to exchange-suffix form."""
     text = str(raw or "").strip().upper()
     if not text:
         return None
@@ -36,6 +40,12 @@ def normalize_holding_code(raw: Any) -> Optional[str]:
     def _digits_to_hk(digits: str) -> str:
         core = digits.lstrip("0") or "0"
         return f"{core.zfill(4)}.HK"
+
+    a_share = _A_SUFFIX_RE.match(text) or _A_PREFIX_RE.match(text)
+    if a_share:
+        exchange = a_share.group("exchange")
+        canonical_exchange = "SH" if exchange == "SS" else exchange
+        return f"{a_share.group('code')}.{canonical_exchange}"
 
     if text.endswith(".HK"):
         base = text[:-3]

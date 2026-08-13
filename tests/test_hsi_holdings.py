@@ -10,8 +10,11 @@ from src.services.hsi_holdings import (
 )
 from src.services.hsi_enrichment import select_enrich_targets
 from src.services.hsi_scanner import (
+    HSI_STOCKS,
+    _code_to_yfinance_format,
     attach_holdings_to_results,
     format_scan_report,
+    merge_stocks_with_holdings,
     turtle_holding_action,
 )
 
@@ -20,6 +23,11 @@ def test_normalize_holding_code():
     assert normalize_holding_code("9988.HK") == "9988.HK"
     assert normalize_holding_code("700") == "0700.HK"
     assert normalize_holding_code("hk00700") == "0700.HK"
+    assert normalize_holding_code("600519.SH") == "600519.SH"
+    assert normalize_holding_code("SH600519") == "600519.SH"
+    assert normalize_holding_code("000001.SZ") == "000001.SZ"
+    assert normalize_holding_code("sz000001") == "000001.SZ"
+    assert normalize_holding_code("000001.SS") == "000001.SH"
 
 
 def test_parse_holdings_text_formats():
@@ -36,6 +44,22 @@ def test_parse_holdings_comma_pairs():
     rows = parse_holdings_text("9988.HK 125.50, 0700.HK 400")
     codes = {r["code"] for r in rows}
     assert codes == {"9988.HK", "0700.HK"}
+
+
+def test_a_share_holding_is_added_without_expanding_hsi_universe():
+    holdings = parse_holdings_text("600519.SH 1500")
+
+    merged, extra = merge_stocks_with_holdings(list(HSI_STOCKS), holdings)
+
+    assert extra == 1
+    assert len(merged) == len(HSI_STOCKS) + 1
+    assert merged[-1] == {"code": "600519.SH", "name": "600519.SH"}
+
+
+def test_shanghai_holding_uses_yahoo_ss_symbol_at_fetch_boundary():
+    assert _code_to_yfinance_format("600519.SH") == "600519.SS"
+    assert _code_to_yfinance_format("000001.SZ") == "000001.SZ"
+    assert _code_to_yfinance_format("0700.HK") == "0700.HK"
 
 
 def test_parse_holdings_empty_and_bad():

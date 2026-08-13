@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] HSI 匹配增强 `top_n=0` / `HSI_ENRICH_TOP_N=0` 改为不加匹配股（`all` 才表示全部）；持仓与经济通上限不变。
 - [改进] HSI 持仓 `HSI_HOLDINGS` 改为 GitHub Actions **变量**（非 secret）；workflow 使用 `vars.HSI_HOLDINGS`。
 - [新功能] HSI 持仓止损参考：从 `HSI_HOLDINGS` 读取成本价，合并扫描并给出 Turtle sell/keep/buy，持仓始终增强并注入 DeepSeek。
+- [改进] HSI 持仓支持 `.SH`/`.SZ` A 股代码，仅扫描配置的 A 股持仓，并优先使用腾讯实时行情、Yahoo 降级。
 - [chore] HSI Kimi 点评默认关闭（`KIMI_COMMENT_ENABLED` 需显式 true 才启用；workflow 默认 false）。
 - [改进] HSI 增强默认改为全部匹配股 + 经济通额外 Top 10（`HSI_ENRICH_TOP_N=all`，`HSI_ENRICH_ETNET_TOP_N=10`）。
 - [改进] HSI 增强分析拆分匹配股与经济通上限：`HSI_ENRICH_TOP_N`（匹配，0/all=全部）与 `HSI_ENRICH_ETNET_TOP_N`（额外 ET Net，0=不加、all=全部），workflow/API 同步。

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from src.services.hsi_enrichment import (
+    _MarketAwareQuoteFetcher,
     _default_analyzer,
     build_enriched_report,
     build_lite_context,
@@ -24,6 +25,34 @@ from src.services.hsi_enrichment import (
     select_enrich_targets,
     select_top_matches,
 )
+
+
+def test_market_aware_quote_fetcher_routes_a_share_to_tencent():
+    yahoo = MagicMock()
+    tencent = MagicMock()
+    tencent_quote = SimpleNamespace(price=1501.0, source="tencent")
+    tencent.get_realtime_quote.return_value = tencent_quote
+    fetcher = _MarketAwareQuoteFetcher(yahoo, tencent)
+
+    assert fetcher.get_realtime_quote("600519.SH") is tencent_quote
+    tencent.get_realtime_quote.assert_called_once_with("600519.SH", source="tencent")
+    yahoo.get_realtime_quote.assert_not_called()
+
+
+def test_market_aware_quote_fetcher_uses_yahoo_for_hk_and_a_share_fallback():
+    yahoo = MagicMock()
+    tencent = MagicMock()
+    yahoo.get_realtime_quote.side_effect = ["hk quote", "a quote"]
+    tencent.get_realtime_quote.return_value = None
+    fetcher = _MarketAwareQuoteFetcher(yahoo, tencent)
+
+    assert fetcher.get_realtime_quote("0700.HK") == "hk quote"
+    assert fetcher.get_realtime_quote("000001.SZ") == "a quote"
+    tencent.get_realtime_quote.assert_called_once_with("000001.SZ", source="tencent")
+    assert yahoo.get_realtime_quote.call_args_list == [
+        call("0700.HK"),
+        call("000001.SZ"),
+    ]
 
 
 def test_select_top_matches_orders_by_potential_score():

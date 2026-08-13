@@ -30,7 +30,7 @@ on:
         default: '10'
         type: string
       holdings:
-        description: 'Optional holdings override (e.g. 9988.HK 125.50). Empty = use repo variable HSI_HOLDINGS'
+        description: 'Optional holdings override (e.g. 9988.HK 125.50, 600519.SH 1500). Empty = use repo variable HSI_HOLDINGS'
         required: false
         default: ''
         type: string

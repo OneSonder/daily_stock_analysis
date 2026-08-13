@@ -144,6 +144,21 @@ def _code_to_manager_format(code: str) -> str:
     return upper
 
 
+def _code_to_yfinance_format(code: str) -> str:
+    """Convert canonical Shanghai ``.SH`` suffixes to Yahoo's ``.SS`` form."""
+    upper = code.strip().upper()
+    if upper.endswith('.SH'):
+        base = upper[:-3]
+        if len(base) == 6 and base.isdigit():
+            return f"{base}.SS"
+    return upper
+
+
+def _yahoo_quote_url(code: str) -> str:
+    yahoo_code = _code_to_yfinance_format(code)
+    return YAHOO_URL_TEMPLATE.format(code=yahoo_code)
+
+
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename lowercase columns to uppercase for signal computation."""
     rename_map = {}
@@ -1087,7 +1102,7 @@ def fetch_history_with_data_provider(code: str, period: str) -> pd.DataFrame:
     except Exception as e:
         logger.debug("DataFetcherManager failed for %s, falling back to yfinance: %s", code, e)
 
-    return yf.Ticker(code).history(period=period)
+    return yf.Ticker(_code_to_yfinance_format(code)).history(period=period)
 
 
 def fetch_history_with_retries(
@@ -1102,7 +1117,11 @@ def fetch_history_with_retries(
 ) -> pd.DataFrame:
     import yfinance as yf
 
-    fetch_fn = fetch_history_with_data_provider if use_multi_source else lambda c, p: yf.Ticker(c).history(period=p)
+    fetch_fn = (
+        fetch_history_with_data_provider
+        if use_multi_source
+        else lambda c, p: yf.Ticker(_code_to_yfinance_format(c)).history(period=p)
+    )
 
     current_delay = delay
     for attempt in range(1, retries + 1):
@@ -1167,20 +1186,30 @@ def fetch_history_batch_yfinance(
     import yfinance as yf
 
     unique_codes = list(dict.fromkeys(code.strip().upper() for code in codes if code.strip()))
+    yahoo_codes = {
+        code: _code_to_yfinance_format(code)
+        for code in unique_codes
+    }
+    unique_yahoo_codes = list(dict.fromkeys(yahoo_codes.values()))
     logger.info(
         "Yahoo batch download starting: tickers=%s period=%s",
         len(unique_codes),
         period,
     )
     raw = yf.download(
-        tickers=unique_codes,
+        tickers=unique_yahoo_codes,
         period=period,
         group_by='ticker',
         threads=False,
         progress=False,
         auto_adjust=True,
     )
-    histories = _split_yfinance_batch(raw, unique_codes)
+    yahoo_histories = _split_yfinance_batch(raw, unique_yahoo_codes)
+    histories = {
+        code: yahoo_histories[yahoo_code]
+        for code, yahoo_code in yahoo_codes.items()
+        if yahoo_code in yahoo_histories
+    }
     logger.info(
         "Yahoo batch download completed: requested=%s received=%s",
         len(unique_codes),
@@ -1195,7 +1224,7 @@ def evaluate_ticker_from_history(
     hist: pd.DataFrame,
 ) -> Dict[str, Any]:
     """Compute one ticker result from an already-fetched history frame."""
-    yahoo_url = YAHOO_URL_TEMPLATE.format(code=code)
+    yahoo_url = _yahoo_quote_url(code)
     if hist is None or hist.empty:
         return {
             'code': code, 'name': name, 'status': 'empty',
@@ -1227,7 +1256,7 @@ def evaluate_ticker(
     retries: int = 5,
     use_multi_source: bool = False,
 ) -> Dict[str, Any]:
-    yahoo_url = YAHOO_URL_TEMPLATE.format(code=code)
+    yahoo_url = _yahoo_quote_url(code)
     try:
         hist = fetch_history_with_retries(code, period, retries=retries, use_multi_source=use_multi_source)
     except Exception as e:
