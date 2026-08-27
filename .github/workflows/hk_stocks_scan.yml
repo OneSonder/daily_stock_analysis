@@ -1,0 +1,116 @@
+name: HK Stocks Turtle Scan
+
+# Manual-only all-HK Turtle/technical scan (no LLM/AI).
+# Universe: committed resources/universes/hk_all_stocks.json
+# (refresh with: python scripts/generate_hk_universe.py)
+"on":
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'History period'
+        required: false
+        default: '3mo'
+        type: choice
+        options: ['5d', '1mo', '3mo', '6mo', '1y', '2y']
+      conditions:
+        description: 'Conditions to match (Turtle defaults: s1_breakout,s2_breakout)'
+        required: false
+        default: 's1_breakout,s2_breakout'
+        type: string
+      max_workers:
+        description: 'Parallel evaluate workers'
+        required: false
+        default: '8'
+        type: string
+      batch_size:
+        description: 'Yahoo history download chunk size'
+        required: false
+        default: '80'
+        type: string
+      news_max_age_days:
+        description: 'Tencent news freshness window in days (matches only)'
+        required: false
+        default: '2'
+        type: string
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HK_SCAN_PERIOD: ${{ inputs.period || '3mo' }}
+  HK_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
+  HK_SCAN_MAX_WORKERS: ${{ inputs.max_workers || '8' }}
+  HK_SCAN_BATCH_SIZE: ${{ inputs.batch_size || '80' }}
+  HK_NEWS_MAX_AGE_DAYS: ${{ inputs.news_max_age_days || '2' }}
+
+jobs:
+  hk-stocks-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Keep scan code aligned with the HSI workflow branch pin.
+          ref: mine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run HK stocks Turtle scan
+        id: scan
+        env:
+          TENCENT_STOCK_NEWS_ENABLED: ${{ vars.TENCENT_STOCK_NEWS_ENABLED || 'true' }}
+        run: |
+          if [ ! -f resources/universes/hk_all_stocks.json ]; then
+            echo "Missing resources/universes/hk_all_stocks.json"
+            echo "Refresh with: python scripts/generate_hk_universe.py"
+            exit 1
+          fi
+          mkdir -p reports
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from src.services.hk_stock_scanner import run_hk_stocks_scan
+
+          result = run_hk_stocks_scan(
+              period=os.getenv("HK_SCAN_PERIOD", "3mo"),
+              conditions=os.getenv("HK_SCAN_CONDITIONS", "s1_breakout,s2_breakout"),
+              max_workers=int(os.getenv("HK_SCAN_MAX_WORKERS", "8") or "8"),
+              batch_size=int(os.getenv("HK_SCAN_BATCH_SIZE", "80") or "80"),
+              news_max_age_days=int(os.getenv("HK_NEWS_MAX_AGE_DAYS", "2") or "2"),
+              check_trading_day=True,
+              use_multi_source=False,
+              allow_per_ticker_fallback=False,
+              reports_dir=Path("reports"),
+              save_report=True,
+          )
+          payload = result["payload"]
+          news = result.get("news") or []
+          print(json.dumps(payload.get("stats") or {}, indent=2))
+          print(f"Universe: {payload.get('universe_size')} ({payload.get('universe_source')})")
+          print(f"Matched: {len(payload.get('matches') or [])} stocks")
+          print(f"News rows: {len(news)}")
+          print(f"Report path: {result.get('report_path')}")
+          print()
+          print(result.get("report_text") or "")
+          if result.get("report_path"):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"report_path={result['report_path']}\n")
+          PY
+
+      - name: Upload HK stocks scan report
+        if: always() && steps.scan.outputs.report_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hk-stocks-scan-report
+          path: reports/hk_stocks_scan_*.md
+          if-no-files-found: warn

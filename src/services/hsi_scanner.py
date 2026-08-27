@@ -1179,8 +1179,13 @@ def _split_yfinance_batch(
 def fetch_history_batch_yfinance(
     codes: List[str],
     period: str,
+    batch_size: Optional[int] = None,
 ) -> Dict[str, pd.DataFrame]:
-    """Download multiple Yahoo histories in one batch request."""
+    """Download multiple Yahoo histories in one or more batch requests.
+
+    When ``batch_size`` is a positive integer, tickers are downloaded in chunks
+    to keep large universes (e.g. all HK listings) within Yahoo request limits.
+    """
     if not codes:
         return {}
     import yfinance as yf
@@ -1191,20 +1196,30 @@ def fetch_history_batch_yfinance(
         for code in unique_codes
     }
     unique_yahoo_codes = list(dict.fromkeys(yahoo_codes.values()))
+    chunk = int(batch_size) if batch_size is not None and int(batch_size) > 0 else 0
+    chunks: List[List[str]] = (
+        [unique_yahoo_codes[i:i + chunk] for i in range(0, len(unique_yahoo_codes), chunk)]
+        if chunk
+        else [unique_yahoo_codes]
+    )
     logger.info(
-        "Yahoo batch download starting: tickers=%s period=%s",
+        "Yahoo batch download starting: tickers=%s period=%s chunks=%s batch_size=%s",
         len(unique_codes),
         period,
+        len(chunks),
+        chunk or "all",
     )
-    raw = yf.download(
-        tickers=unique_yahoo_codes,
-        period=period,
-        group_by='ticker',
-        threads=False,
-        progress=False,
-        auto_adjust=True,
-    )
-    yahoo_histories = _split_yfinance_batch(raw, unique_yahoo_codes)
+    yahoo_histories: Dict[str, pd.DataFrame] = {}
+    for part in chunks:
+        raw = yf.download(
+            tickers=part,
+            period=period,
+            group_by='ticker',
+            threads=False,
+            progress=False,
+            auto_adjust=True,
+        )
+        yahoo_histories.update(_split_yfinance_batch(raw, part))
     histories = {
         code: yahoo_histories[yahoo_code]
         for code, yahoo_code in yahoo_codes.items()
@@ -1312,8 +1327,15 @@ def scan_stocks(
     retries: int = 5,
     check_trading_day: bool = False,
     use_multi_source: bool = False,
+    batch_size: Optional[int] = None,
+    allow_per_ticker_fallback: bool = True,
 ) -> Dict[str, Any]:
-    """Scan an arbitrary stock universe with S1/S2 breakout conditions."""
+    """Scan an arbitrary stock universe with S1/S2 breakout conditions.
+
+    ``batch_size`` chunks Yahoo bulk downloads (None = single request).
+    When ``allow_per_ticker_fallback`` is False, symbols missing after bulk/cache
+    are marked unavailable instead of issuing per-ticker Yahoo retries.
+    """
     wanted = parse_conditions(conditions)
 
     if check_trading_day and not is_hk_market_open():
@@ -1333,6 +1355,7 @@ def scan_stocks(
     prefetched: Dict[str, pd.DataFrame] = {}
     cache_hits = 0
     batch_downloaded = 0
+    unavailable_without_fallback = 0
 
     if not use_multi_source:
         from src.services.ohlcv_cache import load_cached_history, save_cached_history
@@ -1351,13 +1374,24 @@ def scan_stocks(
 
         if missing_codes:
             try:
-                downloaded = fetch_history_batch_yfinance(missing_codes, period)
-            except Exception as exc:
-                logger.warning(
-                    "Yahoo batch download failed; using per-ticker fallback for %s tickers: %s",
-                    len(missing_codes),
-                    exc,
+                downloaded = fetch_history_batch_yfinance(
+                    missing_codes,
+                    period,
+                    batch_size=batch_size,
                 )
+            except Exception as exc:
+                if allow_per_ticker_fallback:
+                    logger.warning(
+                        "Yahoo batch download failed; using per-ticker fallback for %s tickers: %s",
+                        len(missing_codes),
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Yahoo batch download failed; marking %s tickers unavailable: %s",
+                        len(missing_codes),
+                        exc,
+                    )
                 downloaded = {}
             for code, frame in downloaded.items():
                 prefetched[code] = frame
@@ -1368,35 +1402,49 @@ def scan_stocks(
         future_to_idx = {}
         for idx, item in enumerate(stocks):
             code = item.get('code', '').strip().upper()
+            name = item.get('name', '')
             if code in prefetched:
                 future = executor.submit(
                     evaluate_ticker_from_history_timed,
                     code,
-                    item.get('name', ''),
+                    name,
                     prefetched[code],
                 )
-            else:
+                future_to_idx[future] = idx
+            elif allow_per_ticker_fallback or use_multi_source:
                 fallback_retries = retries if use_multi_source else min(retries, 2)
                 future = executor.submit(
                     evaluate_ticker_timed,
                     code,
-                    item.get('name', ''),
+                    name,
                     period,
                     fallback_retries,
                     use_multi_source,
                 )
-            future_to_idx[future] = idx
+                future_to_idx[future] = idx
+            else:
+                unavailable_without_fallback += 1
+                results[idx] = {
+                    'code': code,
+                    'name': name,
+                    'status': 'empty',
+                    'message': 'No data after bulk download (per-ticker fallback disabled)',
+                    'url': _yahoo_quote_url(code),
+                    'elapsed_ms': 0.0,
+                }
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             results[idx] = future.result()
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
     logger.info(
-        "scan_stocks tickers=%s max_workers=%s cache_hits=%s batch_downloaded=%s total_ms=%.2f",
+        "scan_stocks tickers=%s max_workers=%s cache_hits=%s batch_downloaded=%s "
+        "unavailable_without_fallback=%s total_ms=%.2f",
         len(stocks),
         worker_count,
         cache_hits,
         batch_downloaded,
+        unavailable_without_fallback,
         total_ms,
     )
 
@@ -1416,6 +1464,9 @@ def scan_stocks(
             'max_workers': worker_count,
             'cache_hits': cache_hits,
             'batch_downloaded': batch_downloaded,
+            'unavailable_without_fallback': unavailable_without_fallback,
+            'batch_size': batch_size,
+            'allow_per_ticker_fallback': allow_per_ticker_fallback,
             'total_ms': total_ms,
         },
         'skipped': False,

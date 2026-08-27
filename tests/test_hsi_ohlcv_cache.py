@@ -117,9 +117,53 @@ class TestHsiOhlcvCache(unittest.TestCase):
                 use_multi_source=False,
             )
 
-        mock_batch.assert_called_once_with(["0700.HK"], "3mo")
+        mock_batch.assert_called_once_with(["0700.HK"], "3mo", batch_size=None)
         self.assertEqual(payload["stats"]["batch_downloaded"], 1)
         self.assertEqual(payload["matches"][0]["code"], "0700.HK")
+
+    @patch("yfinance.download")
+    def test_fetch_history_batch_chunks_requests(self, mock_download):
+        mock_download.side_effect = [
+            _history_frame(),
+            _history_frame(breakout=True),
+        ]
+
+        result = fetch_history_batch_yfinance(
+            ["0001.HK", "0700.HK"],
+            "3mo",
+            batch_size=1,
+        )
+
+        self.assertEqual(mock_download.call_count, 2)
+        self.assertEqual(mock_download.call_args_list[0].kwargs["tickers"], ["0001.HK"])
+        self.assertEqual(mock_download.call_args_list[1].kwargs["tickers"], ["0700.HK"])
+        self.assertEqual(set(result), {"0001.HK", "0700.HK"})
+
+    @patch("src.services.hsi_scanner.evaluate_ticker_timed")
+    @patch("src.services.hsi_scanner.fetch_history_batch_yfinance")
+    def test_scan_can_disable_per_ticker_fallback(self, mock_batch, mock_evaluate):
+        mock_batch.return_value = {"0700.HK": _history_frame(breakout=True)}
+        with patch.dict(
+            os.environ,
+            {"REPORT_QUALIFIED_SCAN_CACHE_ENABLED": "false"},
+        ):
+            payload = scan_stocks(
+                [
+                    {"code": "0700.HK", "name": "Tencent"},
+                    {"code": "9988.HK", "name": "Alibaba"},
+                ],
+                period="3mo",
+                conditions="s1_breakout,s2_breakout",
+                use_multi_source=False,
+                batch_size=50,
+                allow_per_ticker_fallback=False,
+            )
+
+        mock_batch.assert_called_once_with(["0700.HK", "9988.HK"], "3mo", batch_size=50)
+        mock_evaluate.assert_not_called()
+        self.assertEqual(payload["stats"]["unavailable_without_fallback"], 1)
+        self.assertEqual(payload["matches"][0]["code"], "0700.HK")
+        self.assertEqual(payload["no_price"][0]["code"], "9988.HK")
 
 
 if __name__ == "__main__":

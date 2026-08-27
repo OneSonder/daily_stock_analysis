@@ -2,7 +2,10 @@
 
 ## `hk_all_stocks.json`
 
-Committed snapshot of **active HK listed equities** used by the `HK_ALL` qualified-scan token (`REPORT_QUALIFIED_SCAN_STOCK_LIST=HK_ALL`).
+Committed snapshot of **active HK listed equities** used by:
+
+- the `HK_ALL` qualified-scan token (`REPORT_QUALIFIED_SCAN_STOCK_LIST=HK_ALL`)
+- the GitHub Actions workflow **HK Stocks Turtle Scan** (`.github/workflows/hk_stocks_scan.yml`)
 
 | Field | Description |
 | --- | --- |
@@ -16,3 +19,4 @@ Committed snapshot of **active HK listed equities** used by the `HK_ALL` qualifi
 - The spot list may include instruments beyond large-cap equities; the generator keeps standard numeric HK codes (`0001`–`99999`).
 - After IPOs or delistings, refresh this file periodically so scans stay current.
 - Full-market scans are much slower than `HSI`; for GitHub Actions consider `REPORT_QUALIFIED_SCAN_MAX_WORKERS=8`–`16` and `ANALYSIS_TIMEOUT_MINUTES=60`+.
+- Turtle scan details: [`docs/hk-stocks-scan.md`](../../docs/hk-stocks-scan.md).
