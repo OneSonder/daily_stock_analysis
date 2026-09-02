@@ -38,6 +38,15 @@ class TestQualifiedStockScanner(unittest.TestCase):
         wanted = parse_conditions("w_bottom,m_top,bullish_engulfing")
         self.assertEqual(wanted, {"w_bottom", "m_top", "bullish_engulfing"})
 
+    def test_parse_conditions_accepts_recent_turtle_breakouts(self):
+        wanted = parse_conditions(
+            "s1_recent_high_breakout,s2_recent_close_breakout"
+        )
+        self.assertEqual(
+            wanted,
+            {"s1_recent_high_breakout", "s2_recent_close_breakout"},
+        )
+
     def test_to_yahoo_code_from_manager_format(self):
         self.assertEqual(_to_yahoo_code("HK00700"), "0700.HK")
 

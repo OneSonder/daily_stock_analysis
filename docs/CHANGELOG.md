@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] HSI / 全港股扫描新增可选近期严格首破条件：`s1/s2_recent_high_breakout` 与 `s1/s2_recent_close_breakout`（近 2 个交易日 High/Close 首次上穿 20/55 日通道），默认匹配条件不变。
 - [新功能] 新增全港股海龟扫描工作流 `HK Stocks Turtle Scan`：读取 `resources/universes/hk_all_stocks.json`、复用 Turtle/技术匹配、仅对匹配股抓腾讯新闻，不含任何 LLM / Tushare。
 - [修复] HSI 决策仪表盘固定使用 DeepSeek 并隔离全局 LLM Channels/YAML/fallback，确保报告来源标签与实际模型一致。
 - [新功能] HSI 增强新增默认关闭的 Gemini 独立点评（`GEMINI_COMMENT_ENABLED`），与 DeepSeek 仪表盘、Kimi 点评分别执行并独立降级。

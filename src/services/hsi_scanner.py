@@ -112,6 +112,8 @@ HSI_STOCKS = [
 VALID_CONDITIONS = {
     'close_vs_entry', 'close_vs_s2_entry', 's1_breakout', 's2_breakout', 's1_exit', 's2_exit',
     's1_entry_allowed', 'turtle_trend_ok',
+    's1_recent_high_breakout', 's2_recent_high_breakout',
+    's1_recent_close_breakout', 's2_recent_close_breakout',
     'w_bottom', 'm_top', 'double_bottom', 'double_top', 'head_shoulders', 'inverse_head_shoulders',
     'triangle_breakout', 'bull_flag', 'bear_flag', 'gap_up', 'gap_down',
     'bullish_engulfing', 'bearish_engulfing', 'doji', 'hammer', 'shooting_star',
@@ -616,6 +618,49 @@ def _s1_last_breakout_was_winner(
         return False
 
 
+def _recent_donchian_first_cross(
+    price: pd.Series,
+    channel: pd.Series,
+) -> Tuple[bool, Optional[str]]:
+    """Strict first-cross vs prior Donchian high within the last 2 trading bars.
+
+    A bar qualifies only when price is above its own prior channel *and* the
+    immediately preceding bar was not. Returns ``(flag, timing)`` where timing
+    is ``'today'``, ``'previous'``, or ``None`` (prefer today when both qualify).
+    """
+    if price is None or channel is None or len(price) < 3:
+        return False, None
+    prior = channel.shift(1)
+
+    def _is_above(idx: int) -> Optional[bool]:
+        if idx < 0:
+            return None
+        p = price.iloc[idx]
+        c = prior.iloc[idx]
+        if pd.isna(p) or pd.isna(c):
+            return None
+        return bool(float(p) > float(c))
+
+    def _is_first_cross(idx: int) -> bool:
+        return _is_above(idx) is True and _is_above(idx - 1) is False
+
+    n = len(price)
+    if _is_first_cross(n - 1):
+        return True, "today"
+    if _is_first_cross(n - 2):
+        return True, "previous"
+    return False, None
+
+
+def format_recent_breakout_timing(timing: Optional[str]) -> str:
+    """Map recent-breakout timing metadata to Chinese report labels."""
+    if timing == "today":
+        return "今日"
+    if timing == "previous":
+        return "前一交易日"
+    return "无"
+
+
 def _turtle_score_delta(
     *,
     s1_breakout: bool,
@@ -919,6 +964,19 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     entry20_value = float(entry20.iloc[-1])
     entry55_value = float(entry55.iloc[-1])
 
+    s1_recent_high_breakout, s1_recent_high_timing = _recent_donchian_first_cross(
+        work['High'], entry20,
+    )
+    s2_recent_high_breakout, s2_recent_high_timing = _recent_donchian_first_cross(
+        work['High'], entry55,
+    )
+    s1_recent_close_breakout, s1_recent_close_timing = _recent_donchian_first_cross(
+        work['Close'], entry20,
+    )
+    s2_recent_close_breakout, s2_recent_close_timing = _recent_donchian_first_cross(
+        work['Close'], entry55,
+    )
+
     n_value = _compute_n(work, window=20)
     turtle_trend_ok, turtle_trend_rule = _adaptive_turtle_trend_ok(work)
     s1_last_was_winner = _s1_last_breakout_was_winner(work, n_value=n_value)
@@ -1031,6 +1089,14 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'close_vs_s2_entry': close_vs_s2_entry,
         's1_breakout': s1_breakout,
         's2_breakout': s2_breakout,
+        's1_recent_high_breakout': s1_recent_high_breakout,
+        's2_recent_high_breakout': s2_recent_high_breakout,
+        's1_recent_close_breakout': s1_recent_close_breakout,
+        's2_recent_close_breakout': s2_recent_close_breakout,
+        's1_recent_high_timing': s1_recent_high_timing,
+        's2_recent_high_timing': s2_recent_high_timing,
+        's1_recent_close_timing': s1_recent_close_timing,
+        's2_recent_close_timing': s2_recent_close_timing,
         's1_exit': s1_exit,
         's2_exit': s2_exit,
         'w_bottom': w_bottom,
@@ -1773,6 +1839,13 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
                 f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
                 f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
                 f" | S1允许开仓: {'是' if s1_ok else '否'}"
+            )
+            lines.append(
+                "  - 近期突破: "
+                f"S1 High={format_recent_breakout_timing(m.get('s1_recent_high_timing'))}"
+                f" / Close={format_recent_breakout_timing(m.get('s1_recent_close_timing'))}"
+                f" | S2 High={format_recent_breakout_timing(m.get('s2_recent_high_timing'))}"
+                f" / Close={format_recent_breakout_timing(m.get('s2_recent_close_timing'))}"
             )
         lines.append("")
     else:

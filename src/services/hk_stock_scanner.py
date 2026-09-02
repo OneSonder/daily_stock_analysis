@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from src.services.hsi_holdings import normalize_holding_code
 from src.services.hsi_scanner import (
     format_pattern_names,
+    format_recent_breakout_timing,
     get_scan_config_from_env,
     scan_stocks,
 )
@@ -232,6 +233,13 @@ def _format_match_technical_block(match: Dict[str, Any]) -> List[str]:
             f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
             f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
             f" | S1允许开仓: {'是' if s1_ok else '否'}"
+        ),
+        (
+            "  - 近期突破: "
+            f"S1 High={format_recent_breakout_timing(match.get('s1_recent_high_timing'))}"
+            f" / Close={format_recent_breakout_timing(match.get('s1_recent_close_timing'))}"
+            f" | S2 High={format_recent_breakout_timing(match.get('s2_recent_high_timing'))}"
+            f" / Close={format_recent_breakout_timing(match.get('s2_recent_close_timing'))}"
         ),
     ]
 

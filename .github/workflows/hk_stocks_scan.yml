@@ -13,7 +13,7 @@ name: HK Stocks Turtle Scan
         type: choice
         options: ['5d', '1mo', '3mo', '6mo', '1y', '2y']
       conditions:
-        description: 'Conditions to match (Turtle defaults: s1_breakout,s2_breakout)'
+        description: 'Conditions to match (defaults s1_breakout,s2_breakout; recent: s1_recent_high_breakout,s2_recent_high_breakout,s1_recent_close_breakout,s2_recent_close_breakout)'
         required: false
         default: 's1_breakout,s2_breakout'
         type: string

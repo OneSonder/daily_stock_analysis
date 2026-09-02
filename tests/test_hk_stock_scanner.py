@@ -114,6 +114,10 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
                 "turtle_trend_rule": "ma20_ma55",
                 "s1_last_was_winner": False,
                 "s1_entry_allowed": True,
+                "s1_recent_high_timing": "today",
+                "s1_recent_close_timing": None,
+                "s2_recent_high_timing": "previous",
+                "s2_recent_close_timing": None,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -143,6 +147,7 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
     assert "## 匹配结果（1）" in text
     assert "### 技术指标与形态" in text
     assert "海龟: N=5.0" in text
+    assert "近期突破: S1 High=今日 / Close=无 | S2 High=前一交易日 / Close=无" in text
     assert "resources/universes/hk_all_stocks.json" in text
     assert "## 腾讯新闻（仅匹配股）" in text
     assert "腾讯营收领先" in text

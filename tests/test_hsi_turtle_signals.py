@@ -9,10 +9,13 @@ import pandas as pd
 from src.services.hsi_scanner import (
     _adaptive_turtle_trend_ok,
     _compute_n,
+    _recent_donchian_first_cross,
     _s1_last_breakout_was_winner,
     _turtle_score_delta,
     compute_signals_full,
+    format_recent_breakout_timing,
     format_scan_report,
+    parse_conditions,
 )
 
 
@@ -149,6 +152,10 @@ def test_format_scan_report_includes_turtle_chinese_lines():
                 "turtle_trend_rule": "ma20_ma55",
                 "s1_last_was_winner": False,
                 "s1_entry_allowed": True,
+                "s1_recent_high_timing": "today",
+                "s1_recent_close_timing": "previous",
+                "s2_recent_high_timing": None,
+                "s2_recent_close_timing": None,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -164,3 +171,109 @@ def test_format_scan_report_includes_turtle_chinese_lines():
     assert "2N止损参考=390.0" in text
     assert "趋势过滤: 通过" in text
     assert "S1允许开仓: 是" in text
+    assert "近期突破: S1 High=今日 / Close=前一交易日 | S2 High=无 / Close=无" in text
+
+
+def _flat_then_spike_df(
+    *,
+    bars: int = 70,
+    spike_offset: int = -1,
+    spike_high: float = 110.0,
+    spike_close: float = 101.0,
+    base: float = 100.0,
+) -> pd.DataFrame:
+    """Mostly flat series with one spike bar for Donchian first-cross tests."""
+    closes = np.full(bars, base)
+    highs = np.full(bars, base + 0.5)
+    lows = np.full(bars, base - 0.5)
+    idx = spike_offset if spike_offset >= 0 else bars + spike_offset
+    highs[idx] = spike_high
+    closes[idx] = spike_close
+    lows[idx] = base
+    dates = pd.date_range("2025-01-01", periods=bars, freq="B")
+    return pd.DataFrame(
+        {"Open": closes, "High": highs, "Low": lows, "Close": closes, "Volume": 1e6},
+        index=dates,
+    )
+
+
+def test_recent_high_breakout_today():
+    df = _flat_then_spike_df(spike_offset=-1, spike_high=110.0, spike_close=100.2)
+    out = compute_signals_full(df)
+    assert out["s1_recent_high_breakout"] is True
+    assert out["s1_recent_high_timing"] == "today"
+    assert out["s1_recent_close_breakout"] is False
+    assert out["s1_recent_close_timing"] is None
+    assert out["s1_breakout"] is True
+
+
+def test_recent_high_breakout_previous_trading_day():
+    df = _flat_then_spike_df(spike_offset=-2, spike_high=110.0, spike_close=100.2)
+    # After spike, revert last bar below channel so only previous qualifies.
+    df.iloc[-1, df.columns.get_loc("High")] = 100.5
+    df.iloc[-1, df.columns.get_loc("Close")] = 100.0
+    out = compute_signals_full(df)
+    assert out["s1_recent_high_breakout"] is True
+    assert out["s1_recent_high_timing"] == "previous"
+    assert out["s1_breakout"] is False
+
+
+def test_recent_close_breakout_today():
+    df = _flat_then_spike_df(spike_offset=-1, spike_high=100.8, spike_close=110.0)
+    out = compute_signals_full(df)
+    assert out["s1_recent_close_breakout"] is True
+    assert out["s1_recent_close_timing"] == "today"
+    # High may or may not exceed prior 20d high depending on spike_high vs base+0.5
+    assert out["s1_recent_high_breakout"] is True  # 100.8 > 100.5
+
+
+def test_strict_first_cross_rejects_already_above():
+    bars = 70
+    closes = np.full(bars, 100.0)
+    highs = np.full(bars, 100.5)
+    # Breakout well before the 2-bar window, then stay above.
+    highs[40] = 120.0
+    closes[40] = 118.0
+    for i in range(41, bars):
+        highs[i] = 119.0
+        closes[i] = 118.0
+    idx = pd.date_range("2025-01-01", periods=bars, freq="B")
+    df = pd.DataFrame(
+        {"Open": closes, "High": highs, "Low": closes - 1.0, "Close": closes, "Volume": 1e6},
+        index=idx,
+    )
+    out = compute_signals_full(df)
+    assert out["s1_breakout"] is False  # not a new high vs prior channel on last bar alone necessarily
+    # Last bar High 119 vs prior rolling max which includes 120 → not breakout
+    assert out["s1_recent_high_breakout"] is False
+    assert out["s1_recent_high_timing"] is None
+    assert out["s1_recent_close_breakout"] is False
+
+
+def test_recent_donchian_helper_prefers_today():
+    # Synthetic series where both last bars are first-crosses vs a step channel.
+    price = pd.Series([1.0, 1.0, 2.0, 1.0, 3.0])
+    channel = pd.Series([1.0, 1.0, 1.0, 2.0, 2.0])
+    # idx2: 2>1 and prev 1!>1 → first cross; idx4: 3>2 and prev 1!>2 → first cross
+    flag, timing = _recent_donchian_first_cross(price, channel)
+    assert flag is True
+    assert timing == "today"
+
+
+def test_parse_conditions_accepts_recent_breakouts():
+    wanted = parse_conditions(
+        "s1_recent_high_breakout,s2_recent_high_breakout,"
+        "s1_recent_close_breakout,s2_recent_close_breakout"
+    )
+    assert wanted == {
+        "s1_recent_high_breakout",
+        "s2_recent_high_breakout",
+        "s1_recent_close_breakout",
+        "s2_recent_close_breakout",
+    }
+
+
+def test_format_recent_breakout_timing_labels():
+    assert format_recent_breakout_timing("today") == "今日"
+    assert format_recent_breakout_timing("previous") == "前一交易日"
+    assert format_recent_breakout_timing(None) == "无"

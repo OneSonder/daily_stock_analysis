@@ -23,7 +23,7 @@
 | 输入 | 默认 | 说明 |
 | --- | --- | --- |
 | `period` | `3mo` | 历史区间 |
-| `conditions` | `s1_breakout,s2_breakout` | 匹配条件（与 HSI 扫描同一套 Turtle S1/S2 字段） |
+| `conditions` | `s1_breakout,s2_breakout` | 匹配条件（与 HSI 扫描同一套字段）。可选近期严格首破：`s1_recent_high_breakout` / `s2_recent_high_breakout` / `s1_recent_close_breakout` / `s2_recent_close_breakout`（近 2 个交易日 High 或 Close 相对 Donchian 通道的首次上穿） |
 | `max_workers` | `8` | 并行评估线程 |
 | `batch_size` | `80` | Yahoo 批量下载分块大小 |
 | `news_max_age_days` | `2` | 腾讯新闻新鲜度窗口（天） |
@@ -38,8 +38,21 @@
 
 - 扫描摘要（池大小、来源、匹配数、缓存/批量统计）
 - **匹配结果**（S1/S2 突破与收盘相对入场位）
-- **技术指标与形态**（均线 / RSI / MACD / K 线形态 + 海龟 N、2N 止损参考、趋势过滤、S1 盈利跳过）
+- **技术指标与形态**（均线 / RSI / MACD / K 线形态 + 海龟 N、2N 止损参考、趋势过滤、S1 盈利跳过、近期 20/55 日 High·Close 首破时间）
 - **腾讯新闻（仅匹配股）**（原文条目；抓取失败时软降级）
+
+### 近期突破条件（可选）
+
+默认仍为当日 `s1_breakout,s2_breakout`。若要筛选「刚突破」，可改用或追加：
+
+| 条件 | 含义 |
+| --- | --- |
+| `s1_recent_high_breakout` | 近 2 个交易日 High 首次上穿前 20 日最高价 |
+| `s2_recent_high_breakout` | 近 2 个交易日 High 首次上穿前 55 日最高价 |
+| `s1_recent_close_breakout` | 近 2 个交易日 Close 首次上穿前 20 日最高价 |
+| `s2_recent_close_breakout` | 近 2 个交易日 Close 首次上穿前 55 日最高价 |
+
+“首次”指该交易日相对其自身前一根 K 线从「未上穿」变为「上穿」；已在通道上方继续运行的不算。报告中显示 `今日` / `前一交易日` / `无`。
 
 **不包含**：持仓止损表、经济通榜单、LLM 点评 / 决策仪表盘、全市场无行情明细列表。
 
