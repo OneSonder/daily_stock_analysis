@@ -285,14 +285,22 @@ def format_hk_scan_report(
 
     if matches:
         lines.append(f"## 匹配结果（{len(matches)}）\n")
-        lines.append("| 代号 | 名称 | 收盘 | S1 | S2 | 收盘≥S1 | 收盘≥S2 |")
-        lines.append("|------|------|------|----|----|--------|--------|")
+        lines.append(
+            "| 代号 | 名称 | 收盘 | S1 | S2 | S1近H | S2近H | S1近C | S2近C | 收盘≥S1 | 收盘≥S2 |"
+        )
+        lines.append(
+            "|------|------|------|----|----|------|------|------|------|--------|--------|"
+        )
         for m in matches:
             lines.append(
                 f"| [{m.get('code', '')}]({m.get('url', '')}) | {m.get('name', '')} "
                 f"| {m.get('close', '暂无')} "
                 f"| {'✅' if m.get('s1_breakout') else '❌'} "
                 f"| {'✅' if m.get('s2_breakout') else '❌'} "
+                f"| {format_recent_breakout_timing(m.get('s1_recent_high_timing'))} "
+                f"| {format_recent_breakout_timing(m.get('s2_recent_high_timing'))} "
+                f"| {format_recent_breakout_timing(m.get('s1_recent_close_timing'))} "
+                f"| {format_recent_breakout_timing(m.get('s2_recent_close_timing'))} "
                 f"| {'✅' if m.get('close_vs_entry') else '❌'} "
                 f"| {'✅' if m.get('close_vs_s2_entry') else '❌'} |"
             )

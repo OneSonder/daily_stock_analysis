@@ -171,6 +171,8 @@ def test_format_scan_report_includes_turtle_chinese_lines():
     assert "2N止损参考=390.0" in text
     assert "趋势过滤: 通过" in text
     assert "S1允许开仓: 是" in text
+    assert "| S1近H | S2近H | S1近C | S2近C |" in text
+    assert "| 今日 | 无 | 前一交易日 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=前一交易日 | S2 High=无 / Close=无" in text
 
 

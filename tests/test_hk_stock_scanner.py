@@ -147,6 +147,8 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
     assert "## 匹配结果（1）" in text
     assert "### 技术指标与形态" in text
     assert "海龟: N=5.0" in text
+    assert "| S1近H | S2近H | S1近C | S2近C |" in text
+    assert "| 今日 | 前一交易日 | 无 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=无 | S2 High=前一交易日 / Close=无" in text
     assert "resources/universes/hk_all_stocks.json" in text
     assert "## 腾讯新闻（仅匹配股）" in text
