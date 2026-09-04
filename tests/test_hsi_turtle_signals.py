@@ -165,6 +165,9 @@ def test_format_scan_report_includes_turtle_chinese_lines():
                 "volume_ratio": 1.8,
                 "volume_confirm": True,
                 "avg_turnover_20": 12_000_000,
+                "atr_pct": 1.3,
+                "close_vs_ma100": True,
+                "ma100": 380.0,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -181,8 +184,10 @@ def test_format_scan_report_includes_turtle_chinese_lines():
     assert "趋势过滤: 通过" in text
     assert "S1允许开仓: 是" in text
     assert "| S1近H | S2近H | S1近C | S2近C |" in text
-    assert "| 档 | 分 | S1开 | 趋势 | 延伸N | 量比 |" in text
-    assert "| B | 72.5 | 是 | 通过 | 1.2 | 1.8 |" in text
+    assert "| MA100 | 延伸N | 量比 | 均额 | ATR% |" in text
+    assert "| B | 72.5 | 是 | 通过 | 上 | 1.2 | 1.8 | 1200万 | 1.3% |" in text
+    assert "ATR%=1.3%" in text
+    assert "MA100: 上" in text
     assert "| 今日 | 无 | 前一交易日 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=前一交易日 | S2 High=无 / Close=无" in text
     assert "潜力: B 72.5 — S1最高价首破, 趋势通过, 放量" in text
@@ -278,13 +283,14 @@ def test_recent_donchian_helper_prefers_today():
 def test_parse_conditions_accepts_recent_breakouts():
     wanted = parse_conditions(
         "s1_recent_high_breakout,s2_recent_high_breakout,"
-        "s1_recent_close_breakout,s2_recent_close_breakout"
+        "s1_recent_close_breakout,s2_recent_close_breakout,close_vs_ma100"
     )
     assert wanted == {
         "s1_recent_high_breakout",
         "s2_recent_high_breakout",
         "s1_recent_close_breakout",
         "s2_recent_close_breakout",
+        "close_vs_ma100",
     }
 
 
@@ -334,6 +340,8 @@ def test_compute_signals_full_includes_volume_and_potential_reasons():
     out = compute_signals_full(df)
     assert out.get("volume_ratio") is not None
     assert out["volume_confirm"] is True
+    assert out.get("atr_pct") is not None
+    assert out.get("close_vs_ma100") is None
     assert "setup_score" in out
     assert isinstance(out.get("potential_reasons"), list)
     assert out.get("potential_tier") in {"A", "B", "C", "D"}
@@ -355,3 +363,19 @@ def test_sort_matches_by_potential_and_format_order():
     tencent_pos = text.index("0700.HK")
     hsbc_pos = text.index("0005.HK")
     assert tencent_pos < hsbc_pos
+
+
+def test_close_vs_ma100_true_on_uptrend_with_enough_bars():
+    df = _trending_df(120)
+    out = compute_signals_full(df)
+    assert out["close_vs_ma100"] is True
+    assert out.get("ma100") is not None
+    assert out["close"] > out["ma100"]
+    assert "MA100上方" in out["potential_reasons"]
+
+
+def test_close_vs_ma100_false_when_price_below_average():
+    df = _trending_df(120, start=200.0, step=-0.8)
+    out = compute_signals_full(df)
+    assert out["close_vs_ma100"] is False
+    assert "MA100下方" in out["potential_reasons"]

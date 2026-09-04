@@ -82,18 +82,39 @@ def resolve_hk_min_avg_turnover(min_avg_turnover: Optional[float] = None) -> flo
     return max(0.0, _env_float("HK_SCAN_MIN_AVG_TURNOVER", DEFAULT_MIN_AVG_TURNOVER))
 
 
-def resolve_hk_require_volume_confirm(require_volume_confirm: Optional[bool] = None) -> bool:
-    """When true, drop names with volume data that fail volume_confirm."""
-    if require_volume_confirm is not None:
-        return bool(require_volume_confirm)
-    raw = (os.getenv("HK_SCAN_REQUIRE_VOLUME_CONFIRM") or "").strip().lower()
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
     if not raw:
-        return False
+        return default
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    return False
+    return default
+
+
+def resolve_hk_require_volume_confirm(require_volume_confirm: Optional[bool] = None) -> bool:
+    """When true, drop names with volume data that fail volume_confirm."""
+    if require_volume_confirm is not None:
+        return bool(require_volume_confirm)
+    return _env_bool("HK_SCAN_REQUIRE_VOLUME_CONFIRM", False)
+
+
+def resolve_hk_require_trend(require_trend: Optional[bool] = None) -> bool:
+    """When true, drop matches that fail turtle_trend_ok. Default true."""
+    if require_trend is not None:
+        return bool(require_trend)
+    return _env_bool("HK_SCAN_REQUIRE_TREND", True)
+
+
+def resolve_hk_require_ma100(require_ma100: Optional[bool] = None) -> bool:
+    """When true, drop names with close_vs_ma100 is False. Missing MA100 does not drop.
+
+    Needs ~100 trading days (use ``period=1y``). On ``3mo`` this gate is a no-op.
+    """
+    if require_ma100 is not None:
+        return bool(require_ma100)
+    return _env_bool("HK_SCAN_REQUIRE_MA100", False)
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -111,8 +132,10 @@ def liquidity_filter_reason(
     min_price: float,
     min_avg_turnover: float,
     require_volume_confirm: bool,
+    require_trend: bool,
+    require_ma100: bool,
 ) -> Optional[str]:
-    """Return a reason if the match fails HK liquidity gates; missing data does not fail."""
+    """Return a reason if the match fails HK quality gates; missing optional data does not fail."""
     close = _as_float(row.get("close"))
     if min_price > 0 and close is not None and close < min_price:
         return f"close {close} < min_price {min_price}"
@@ -123,6 +146,10 @@ def liquidity_filter_reason(
         ratio = _as_float(row.get("volume_ratio"))
         if ratio is not None and not bool(row.get("volume_confirm")):
             return "volume not confirmed"
+    if require_trend and not bool(row.get("turtle_trend_ok")):
+        return "turtle_trend_ok is false"
+    if require_ma100 and row.get("close_vs_ma100") is False:
+        return "close below MA100"
     return None
 
 
@@ -132,11 +159,15 @@ def apply_hk_liquidity_gates(
     min_price: Optional[float] = None,
     min_avg_turnover: Optional[float] = None,
     require_volume_confirm: Optional[bool] = None,
+    require_trend: Optional[bool] = None,
+    require_ma100: Optional[bool] = None,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Split matches into kept vs liquidity-filtered (missing volume/price does not drop)."""
+    """Split matches into kept vs quality-filtered (missing volume/MA100 does not drop)."""
     price_floor = resolve_hk_min_price(min_price)
     turnover_floor = resolve_hk_min_avg_turnover(min_avg_turnover)
     require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
+    require_trend_ok = resolve_hk_require_trend(require_trend)
+    require_above_ma100 = resolve_hk_require_ma100(require_ma100)
     kept: List[Dict[str, Any]] = []
     dropped: List[Dict[str, Any]] = []
     for row in matches or []:
@@ -145,6 +176,8 @@ def apply_hk_liquidity_gates(
             min_price=price_floor,
             min_avg_turnover=turnover_floor,
             require_volume_confirm=require_vol,
+            require_trend=require_trend_ok,
+            require_ma100=require_above_ma100,
         )
         if reason:
             dropped.append({**row, "liquidity_filter_reason": reason})
@@ -389,6 +422,8 @@ def run_hk_stocks_scan(
     min_price: Optional[float] = None,
     min_avg_turnover: Optional[float] = None,
     require_volume_confirm: Optional[bool] = None,
+    require_trend: Optional[bool] = None,
+    require_ma100: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Scan all listed HK stocks with Turtle signals + match-only Tencent news.
 
@@ -414,6 +449,8 @@ def run_hk_stocks_scan(
     resolved_min_price = resolve_hk_min_price(min_price)
     resolved_min_turnover = resolve_hk_min_avg_turnover(min_avg_turnover)
     resolved_require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
+    resolved_require_trend = resolve_hk_require_trend(require_trend)
+    resolved_require_ma100 = resolve_hk_require_ma100(require_ma100)
 
     if stocks is not None:
         universe = list(stocks)
@@ -441,6 +478,8 @@ def run_hk_stocks_scan(
             min_price=resolved_min_price,
             min_avg_turnover=resolved_min_turnover,
             require_volume_confirm=resolved_require_vol,
+            require_trend=resolved_require_trend,
+            require_ma100=resolved_require_ma100,
         )
         payload["matches"] = sort_matches_by_potential(kept)
         payload["filtered_illiquid"] = dropped
@@ -449,6 +488,8 @@ def run_hk_stocks_scan(
         stats["min_price"] = resolved_min_price
         stats["min_avg_turnover"] = resolved_min_turnover
         stats["require_volume_confirm"] = resolved_require_vol
+        stats["require_trend"] = resolved_require_trend
+        stats["require_ma100"] = resolved_require_ma100
         payload["stats"] = stats
 
     news_items: List[Dict[str, Any]] = []
@@ -483,4 +524,6 @@ def run_hk_stocks_scan(
         "min_price": resolved_min_price,
         "min_avg_turnover": resolved_min_turnover,
         "require_volume_confirm": resolved_require_vol,
+        "require_trend": resolved_require_trend,
+        "require_ma100": resolved_require_ma100,
     }

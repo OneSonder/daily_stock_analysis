@@ -28,7 +28,7 @@
 | `batch_size` | `80` | Yahoo 批量下载分块大小 |
 | `news_max_age_days` | `2` | 腾讯新闻新鲜度窗口（天） |
 
-也可通过环境变量覆盖：`HK_SCAN_PERIOD`、`HK_SCAN_CONDITIONS`、`HK_SCAN_MAX_WORKERS`、`HK_SCAN_BATCH_SIZE`、`HK_NEWS_MAX_AGE_DAYS`、`HK_SCAN_UNIVERSE_PATH`、`TENCENT_STOCK_NEWS_ENABLED`、`HK_SCAN_MIN_PRICE`、`HK_SCAN_MIN_AVG_TURNOVER`、`HK_SCAN_REQUIRE_VOLUME_CONFIRM`。
+也可通过环境变量覆盖：`HK_SCAN_PERIOD`、`HK_SCAN_CONDITIONS`、`HK_SCAN_MAX_WORKERS`、`HK_SCAN_BATCH_SIZE`、`HK_NEWS_MAX_AGE_DAYS`、`HK_SCAN_UNIVERSE_PATH`、`TENCENT_STOCK_NEWS_ENABLED`、`HK_SCAN_MIN_PRICE`、`HK_SCAN_MIN_AVG_TURNOVER`、`HK_SCAN_REQUIRE_VOLUME_CONFIRM`、`HK_SCAN_REQUIRE_TREND`、`HK_SCAN_REQUIRE_MA100`。
 
 ## 报告内容
 
@@ -37,7 +37,7 @@
 包含：
 
 - 扫描摘要（池大小、来源、匹配数、缓存/批量统计）
-- **匹配结果**（按潜力分降序：档/分、S1 是否允许开仓、趋势过滤、突破延伸 N、量比、S1/S2、近期 High·Close 首破时间）
+- **匹配结果**（按潜力分降序：档/分、S1 开仓、趋势、MA100、延伸 N、量比、20 日均额、ATR%、S1/S2、近期首破）
 - **技术指标与形态**（均线 / RSI / MACD / K 线形态 + 海龟 N、2N 止损参考、趋势过滤、S1 盈利跳过、近期首破、潜力说明、流动性）
 - **腾讯新闻（仅匹配股）**（原文条目；抓取失败时软降级）
 
@@ -55,6 +55,10 @@
 | `HK_SCAN_MIN_PRICE` | `0.1` | 最低收盘价（港币）；`0` 关闭 |
 | `HK_SCAN_MIN_AVG_TURNOVER` | `500000` | 近 20 日均成交额下限；缺数据不剔除；`0` 关闭 |
 | `HK_SCAN_REQUIRE_VOLUME_CONFIRM` | `false` | `true` 时剔除「有量比但未放量」的匹配；缺量比不剔除 |
+| `HK_SCAN_REQUIRE_TREND` | `true` | 剔除 `turtle_trend_ok` 未通过的匹配（默认 MA20>MA55 或 MA50>MA300） |
+| `HK_SCAN_REQUIRE_MA100` | `false` | `true` 时剔除收盘低于 MA100 的匹配；**缺 100 根 K 线不剔除**。请用 `period=1y`（默认 `3mo` 会显示 MA100=`不足`） |
+
+可选扫描条件 `close_vs_ma100` 可写入 `conditions`（仅当历史足够时才会为 true）。
 
 ### 近期突破条件（可选）
 

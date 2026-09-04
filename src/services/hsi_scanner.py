@@ -111,7 +111,7 @@ HSI_STOCKS = [
 
 VALID_CONDITIONS = {
     'close_vs_entry', 'close_vs_s2_entry', 's1_breakout', 's2_breakout', 's1_exit', 's2_exit',
-    's1_entry_allowed', 'turtle_trend_ok',
+    's1_entry_allowed', 'turtle_trend_ok', 'close_vs_ma100',
     's1_recent_high_breakout', 's2_recent_high_breakout',
     's1_recent_close_breakout', 's2_recent_close_breakout',
     'w_bottom', 'm_top', 'double_bottom', 'double_top', 'head_shoulders', 'inverse_head_shoulders',
@@ -561,6 +561,25 @@ def _adaptive_turtle_trend_ok(work: pd.DataFrame) -> Tuple[bool, str]:
         return False, "error"
 
 
+def _close_vs_ma(
+    work: pd.DataFrame,
+    window: int = 100,
+) -> Tuple[Optional[bool], Optional[float]]:
+    """True if last close > MA(window). None when history is too short."""
+    try:
+        close = pd.to_numeric(work["Close"], errors="coerce")
+        if len(close.dropna()) < window:
+            return None, None
+        ma = close.rolling(window).mean().iloc[-1]
+        last = close.iloc[-1]
+        if pd.isna(ma) or pd.isna(last):
+            return None, None
+        ma_value = float(ma)
+        return bool(float(last) > ma_value), round(ma_value, 2)
+    except Exception:
+        return None, None
+
+
 def _s1_last_breakout_was_winner(
     work: pd.DataFrame,
     n_value: Optional[float] = None,
@@ -724,6 +743,7 @@ def _setup_quality_score_delta(
     breakout_extension_n: Optional[float],
     avg_turnover_20: Optional[float],
     close: Optional[float],
+    close_vs_ma100: Optional[bool] = None,
 ) -> float:
     """Bounded setup-quality contribution: first-cross, volume, extension, liquidity."""
     delta = 0.0
@@ -750,6 +770,10 @@ def _setup_quality_score_delta(
         delta -= 8.0
     if close is not None and close < 0.1:
         delta -= 8.0
+    if close_vs_ma100 is True:
+        delta += 3.0
+    elif close_vs_ma100 is False:
+        delta -= 3.0
     return max(-18.0, min(18.0, delta))
 
 
@@ -766,6 +790,7 @@ def _potential_reason_tags(
     volume_confirm: bool,
     volume_ratio: Optional[float],
     breakout_extension_n: Optional[float],
+    close_vs_ma100: Optional[bool] = None,
 ) -> List[str]:
     tags: List[str] = []
     if s2_recent_close_breakout:
@@ -777,6 +802,10 @@ def _potential_reason_tags(
     elif s1_recent_high_breakout:
         tags.append("S1最高价首破")
     tags.append("趋势通过" if turtle_trend_ok else "趋势未过")
+    if close_vs_ma100 is True:
+        tags.append("MA100上方")
+    elif close_vs_ma100 is False:
+        tags.append("MA100下方")
     if s1_entry_allowed:
         tags.append("S1允许开仓")
     elif s1_breakout and s1_last_was_winner:
@@ -816,11 +845,41 @@ def _report_cell(value: Any, digits: Optional[int] = None) -> str:
     return str(value)
 
 
+def format_turnover_cell(value: Any) -> str:
+    """Compact HKD turnover for match tables."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "暂无"
+    if amount >= 1e8:
+        return f"{amount / 1e8:.1f}亿"
+    if amount >= 1e4:
+        return f"{amount / 1e4:.0f}万"
+    return str(int(round(amount)))
+
+
+def format_atr_pct_cell(value: Any) -> str:
+    if value is None or value == "":
+        return "暂无"
+    try:
+        return f"{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def format_ma100_cell(close_vs_ma100: Any) -> str:
+    if close_vs_ma100 is True:
+        return "上"
+    if close_vs_ma100 is False:
+        return "下"
+    return "不足"
+
+
 def format_match_result_table_lines(matches: List[Dict[str, Any]]) -> List[str]:
     """Markdown table for 匹配结果, ranked by potential_score."""
     lines = [
-        "| 代号 | 名称 | 收盘 | 档 | 分 | S1开 | 趋势 | 延伸N | 量比 | S1 | S2 | S1近H | S2近H | S1近C | S2近C |",
-        "|------|------|------|----|----|------|------|------|------|----|----|------|------|------|------|",
+        "| 代号 | 名称 | 收盘 | 档 | 分 | S1开 | 趋势 | MA100 | 延伸N | 量比 | 均额 | ATR% | S1 | S2 | S1近H | S2近H | S1近C | S2近C |",
+        "|------|------|------|----|----|------|------|------|------|------|------|------|----|----|------|------|------|------|",
     ]
     for m in matches:
         lines.append(
@@ -830,8 +889,11 @@ def format_match_result_table_lines(matches: List[Dict[str, Any]]) -> List[str]:
             f"| {_report_cell(m.get('potential_score'))} "
             f"| {'是' if m.get('s1_entry_allowed') else '否'} "
             f"| {'通过' if m.get('turtle_trend_ok') else '未过'} "
+            f"| {format_ma100_cell(m.get('close_vs_ma100'))} "
             f"| {_report_cell(m.get('breakout_extension_n'))} "
             f"| {_report_cell(m.get('volume_ratio'))} "
+            f"| {format_turnover_cell(m.get('avg_turnover_20'))} "
+            f"| {format_atr_pct_cell(m.get('atr_pct'))} "
             f"| {'✅' if m.get('s1_breakout') else '❌'} "
             f"| {'✅' if m.get('s2_breakout') else '❌'} "
             f"| {format_recent_breakout_timing(m.get('s1_recent_high_timing'))} "
@@ -847,7 +909,7 @@ def format_match_technical_lines(match: Dict[str, Any]) -> List[str]:
     code = match.get("code", "")
     name = match.get("name", "")
     ma_bits = []
-    for key in ("ma5", "ma10", "ma20", "ma60"):
+    for key in ("ma5", "ma10", "ma20", "ma60", "ma100"):
         val = match.get(key)
         if val is not None:
             ma_bits.append(f"{key.upper()}={val}")
@@ -865,6 +927,7 @@ def format_match_technical_lines(match: Dict[str, Any]) -> List[str]:
         macd_line += f" — {match.get('macd_signal')}"
     pattern_text = format_pattern_names(match.get("kline_patterns") or [])
     n_val = match.get("n")
+    atr_pct = match.get("atr_pct")
     stop_2n = match.get("stop_long_2n")
     ext_n = match.get("breakout_extension_n")
     trend_ok = match.get("turtle_trend_ok")
@@ -886,11 +949,13 @@ def format_match_technical_lines(match: Dict[str, Any]) -> List[str]:
         f"  - 形态: {pattern_text}",
         (
             f"  - 海龟: N={n_val if n_val is not None else '暂无'}"
+            f", ATR%={format_atr_pct_cell(atr_pct)}"
             f", 2N止损参考={stop_2n if stop_2n is not None else '暂无'}"
             f", 突破延伸N={ext_n if ext_n is not None else '暂无'}"
         ),
         (
             f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
+            f" | MA100: {format_ma100_cell(match.get('close_vs_ma100'))}"
             f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
             f" | S1允许开仓: {'是' if s1_ok else '否'}"
         ),
@@ -1245,6 +1310,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
 
     n_value = _compute_n(work, window=20)
     turtle_trend_ok, turtle_trend_rule = _adaptive_turtle_trend_ok(work)
+    close_vs_ma100, ma100_value = _close_vs_ma(work, window=100)
     s1_last_was_winner = _s1_last_breakout_was_winner(work, n_value=n_value)
     s1_entry_allowed = bool(s1_breakout and not s1_last_was_winner)
 
@@ -1255,6 +1321,9 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     stop_long_2n = None
     if n_value and n_value > 0:
         stop_long_2n = close_value - 2.0 * n_value
+    atr_pct = None
+    if n_value and n_value > 0 and close_value > 0:
+        atr_pct = round(100.0 * n_value / close_value, 2)
 
     w_bottom = _detect_w_bottom(work['High'], work['Low'], work['Close'])
     m_top = _detect_m_top(work['High'], work['Low'], work['Close'])
@@ -1314,6 +1383,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         breakout_extension_n=breakout_extension_n,
         avg_turnover_20=volume_metrics.get("avg_turnover_20"),
         close=close_value,
+        close_vs_ma100=close_vs_ma100,
     )
     potential_reasons = _potential_reason_tags(
         s1_breakout=s1_breakout,
@@ -1327,6 +1397,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         volume_confirm=bool(volume_metrics.get("volume_confirm")),
         volume_ratio=volume_metrics.get("volume_ratio"),
         breakout_extension_n=breakout_extension_n,
+        close_vs_ma100=close_vs_ma100,
     )
     potential_score = max(
         0.0,
@@ -1365,12 +1436,15 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'exit10': round(float(exit10.iloc[-1]), 2),
         'exit20': round(float(exit20.iloc[-1]), 2),
         'n': round(n_value, 4) if n_value is not None else None,
+        'atr_pct': atr_pct,
         'stop_long_2n': round(stop_long_2n, 2) if stop_long_2n is not None else None,
         'breakout_extension_n': (
             round(breakout_extension_n, 2) if breakout_extension_n is not None else None
         ),
         'turtle_trend_ok': turtle_trend_ok,
         'turtle_trend_rule': turtle_trend_rule,
+        'ma100': ma100_value,
+        'close_vs_ma100': close_vs_ma100,
         's1_last_was_winner': s1_last_was_winner,
         's1_entry_allowed': s1_entry_allowed,
         'turtle_score': round(turtle_score, 2),

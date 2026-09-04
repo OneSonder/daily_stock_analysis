@@ -125,6 +125,8 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
                 "volume_ratio": 1.4,
                 "volume_confirm": True,
                 "avg_turnover_20": 8_000_000,
+                "atr_pct": 1.2,
+                "close_vs_ma100": True,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -155,8 +157,8 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
     assert "### 技术指标与形态" in text
     assert "海龟: N=5.0" in text
     assert "| S1近H | S2近H | S1近C | S2近C |" in text
-    assert "| 档 | 分 | S1开 | 趋势 | 延伸N | 量比 |" in text
-    assert "| A | 81 | 是 | 通过 | 1.2 | 1.4 |" in text
+    assert "| MA100 | 延伸N | 量比 | 均额 | ATR% |" in text
+    assert "| A | 81 | 是 | 通过 | 上 | 1.2 | 1.4 | 800万 | 1.2% |" in text
     assert "| 今日 | 前一交易日 | 无 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=无 | S2 High=前一交易日 / Close=无" in text
     assert "潜力: A 81" in text
@@ -186,7 +188,7 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
 ):
     mock_universe.return_value = [{"code": "0700.HK", "name": "腾讯"}]
     mock_scan.return_value = {
-        "matches": [{"code": "0700.HK", "name": "腾讯", "s1_breakout": True}],
+        "matches": [{"code": "0700.HK", "name": "腾讯", "s1_breakout": True, "turtle_trend_ok": True}],
         "results": [{"code": "0700.HK", "status": "ok"}],
         "no_price": [],
         "stats": {"tickers": 1, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 1},
@@ -225,20 +227,26 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
 def test_apply_hk_liquidity_gates_drops_penny_and_thin_turnover():
     kept, dropped = apply_hk_liquidity_gates(
         [
-            {"code": "PENNY.HK", "close": 0.05, "avg_turnover_20": 2_000_000},
-            {"code": "THIN.HK", "close": 10.0, "avg_turnover_20": 1_000},
-            {"code": "0700.HK", "close": 400.0, "avg_turnover_20": 8_000_000, "potential_score": 80},
-            {"code": "NODATA.HK", "close": 12.0},
+            {"code": "PENNY.HK", "close": 0.05, "avg_turnover_20": 2_000_000, "turtle_trend_ok": True},
+            {"code": "THIN.HK", "close": 10.0, "avg_turnover_20": 1_000, "turtle_trend_ok": True},
+            {"code": "0700.HK", "close": 400.0, "avg_turnover_20": 8_000_000, "potential_score": 80, "turtle_trend_ok": True},
+            {"code": "NODATA.HK", "close": 12.0, "turtle_trend_ok": True},
+            {"code": "FADE.HK", "close": 20.0, "avg_turnover_20": 2_000_000, "turtle_trend_ok": False},
+            {"code": "BELOW.HK", "close": 20.0, "avg_turnover_20": 2_000_000, "turtle_trend_ok": True, "close_vs_ma100": False},
         ],
         min_price=0.1,
         min_avg_turnover=500_000,
         require_volume_confirm=False,
+        require_trend=True,
+        require_ma100=True,
     )
     codes = {row["code"] for row in kept}
     assert codes == {"0700.HK", "NODATA.HK"}
     reasons = {row["code"]: row["liquidity_filter_reason"] for row in dropped}
     assert "PENNY.HK" in reasons
     assert "THIN.HK" in reasons
+    assert "FADE.HK" in reasons
+    assert "BELOW.HK" in reasons
 
 
 @patch("src.services.hk_stock_scanner.fetch_tencent_news_for_matches")
@@ -260,6 +268,7 @@ def test_run_hk_stocks_scan_filters_then_ranks_before_news(
                 "avg_turnover_20": 100.0,
                 "potential_score": 99,
                 "s1_breakout": True,
+                "turtle_trend_ok": True,
             },
             {
                 "code": "0700.HK",
@@ -268,6 +277,7 @@ def test_run_hk_stocks_scan_filters_then_ranks_before_news(
                 "avg_turnover_20": 9_000_000,
                 "potential_score": 70,
                 "s1_breakout": True,
+                "turtle_trend_ok": True,
             },
             {
                 "code": "9988.HK",
@@ -276,6 +286,16 @@ def test_run_hk_stocks_scan_filters_then_ranks_before_news(
                 "avg_turnover_20": 7_000_000,
                 "potential_score": 88,
                 "s1_breakout": True,
+                "turtle_trend_ok": True,
+            },
+            {
+                "code": "FADE.HK",
+                "name": "逆势",
+                "close": 50.0,
+                "avg_turnover_20": 6_000_000,
+                "potential_score": 95,
+                "s1_breakout": True,
+                "turtle_trend_ok": False,
             },
         ],
         "results": [],
@@ -293,9 +313,11 @@ def test_run_hk_stocks_scan_filters_then_ranks_before_news(
         min_price=0.1,
         min_avg_turnover=500_000,
         require_volume_confirm=False,
+        require_trend=True,
+        require_ma100=False,
     )
     codes = [m["code"] for m in result["payload"]["matches"]]
     assert codes == ["9988.HK", "0700.HK"]
-    assert result["payload"]["stats"]["liquidity_filtered"] == 1
+    assert result["payload"]["stats"]["liquidity_filtered"] == 2
     news_matches = mock_news.call_args.args[0]
     assert [m["code"] for m in news_matches] == ["9988.HK", "0700.HK"]

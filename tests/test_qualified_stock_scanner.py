@@ -40,11 +40,11 @@ class TestQualifiedStockScanner(unittest.TestCase):
 
     def test_parse_conditions_accepts_recent_turtle_breakouts(self):
         wanted = parse_conditions(
-            "s1_recent_high_breakout,s2_recent_close_breakout"
+            "s1_recent_high_breakout,s2_recent_close_breakout,close_vs_ma100"
         )
         self.assertEqual(
             wanted,
-            {"s1_recent_high_breakout", "s2_recent_close_breakout"},
+            {"s1_recent_high_breakout", "s2_recent_close_breakout", "close_vs_ma100"},
         )
 
     def test_to_yahoo_code_from_manager_format(self):
