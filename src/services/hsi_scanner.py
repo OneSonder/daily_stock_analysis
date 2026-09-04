@@ -661,6 +661,258 @@ def format_recent_breakout_timing(timing: Optional[str]) -> str:
     return "无"
 
 
+def _recent_breakout_bar_offset(*timings: Optional[str]) -> int:
+    """Pick the first-cross bar: today (−1) beats previous-only (−2)."""
+    if any(t == "today" for t in timings):
+        return -1
+    if any(t == "previous" for t in timings):
+        return -2
+    return -1
+
+
+def _volume_liquidity_metrics(
+    work: pd.DataFrame,
+    *,
+    bar_offset: int = -1,
+) -> Dict[str, Any]:
+    """Last/breakout-bar volume vs prior 20-bar median, plus 20d average turnover."""
+    empty = {
+        "volume": None,
+        "avg_volume_20": None,
+        "volume_ratio": None,
+        "avg_turnover_20": None,
+        "volume_confirm": False,
+    }
+    if work is None or len(work) < 3 or "Volume" not in work.columns:
+        return empty
+    close = pd.to_numeric(work["Close"], errors="coerce")
+    vol = pd.to_numeric(work["Volume"], errors="coerce")
+    n = len(vol)
+    idx = bar_offset if abs(int(bar_offset)) <= n else -1
+    abs_idx = n + idx if idx < 0 else idx
+    if abs_idx < 0 or abs_idx >= n:
+        return empty
+    bar_vol = vol.iloc[abs_idx]
+    volume = None if pd.isna(bar_vol) else float(bar_vol)
+    prior = vol.iloc[max(0, abs_idx - 20):abs_idx]
+    prior_close = close.iloc[max(0, abs_idx - 20):abs_idx]
+    prior_valid = prior.dropna()
+    avg_volume_20 = float(prior_valid.mean()) if len(prior_valid) else None
+    median_volume = float(prior_valid.median()) if len(prior_valid) else None
+    volume_ratio = None
+    if volume is not None and median_volume and median_volume > 0:
+        volume_ratio = round(volume / median_volume, 2)
+    turnover = (prior * prior_close).dropna()
+    avg_turnover_20 = float(turnover.mean()) if len(turnover) else None
+    return {
+        "volume": round(volume, 0) if volume is not None else None,
+        "avg_volume_20": round(avg_volume_20, 0) if avg_volume_20 is not None else None,
+        "volume_ratio": volume_ratio,
+        "avg_turnover_20": round(avg_turnover_20, 2) if avg_turnover_20 is not None else None,
+        "volume_confirm": bool(volume_ratio is not None and volume_ratio >= 1.0),
+    }
+
+
+def _setup_quality_score_delta(
+    *,
+    s1_recent_high_breakout: bool,
+    s2_recent_high_breakout: bool,
+    s1_recent_close_breakout: bool,
+    s2_recent_close_breakout: bool,
+    volume_confirm: bool,
+    volume_ratio: Optional[float],
+    breakout_extension_n: Optional[float],
+    avg_turnover_20: Optional[float],
+    close: Optional[float],
+) -> float:
+    """Bounded setup-quality contribution: first-cross, volume, extension, liquidity."""
+    delta = 0.0
+    if s2_recent_close_breakout:
+        delta += 8.0
+    elif s2_recent_high_breakout:
+        delta += 5.0
+    if s1_recent_close_breakout:
+        delta += 4.0
+    elif s1_recent_high_breakout:
+        delta += 2.0
+    if volume_confirm:
+        delta += 6.0
+    elif volume_ratio is not None and volume_ratio < 0.7:
+        delta -= 6.0
+    if breakout_extension_n is not None:
+        if breakout_extension_n > 2.0:
+            delta -= 8.0
+        elif breakout_extension_n > 1.0:
+            delta -= 3.0
+        elif 0.0 <= breakout_extension_n <= 0.5:
+            delta += 3.0
+    if avg_turnover_20 is not None and avg_turnover_20 < 500_000:
+        delta -= 8.0
+    if close is not None and close < 0.1:
+        delta -= 8.0
+    return max(-18.0, min(18.0, delta))
+
+
+def _potential_reason_tags(
+    *,
+    s1_breakout: bool,
+    s1_recent_high_breakout: bool,
+    s2_recent_high_breakout: bool,
+    s1_recent_close_breakout: bool,
+    s2_recent_close_breakout: bool,
+    turtle_trend_ok: bool,
+    s1_entry_allowed: bool,
+    s1_last_was_winner: bool,
+    volume_confirm: bool,
+    volume_ratio: Optional[float],
+    breakout_extension_n: Optional[float],
+) -> List[str]:
+    tags: List[str] = []
+    if s2_recent_close_breakout:
+        tags.append("S2收盘首破")
+    elif s2_recent_high_breakout:
+        tags.append("S2最高价首破")
+    if s1_recent_close_breakout:
+        tags.append("S1收盘首破")
+    elif s1_recent_high_breakout:
+        tags.append("S1最高价首破")
+    tags.append("趋势通过" if turtle_trend_ok else "趋势未过")
+    if s1_entry_allowed:
+        tags.append("S1允许开仓")
+    elif s1_breakout and s1_last_was_winner:
+        tags.append("S1盈利跳过")
+    if volume_confirm:
+        tags.append("放量")
+    elif volume_ratio is not None:
+        tags.append("未放量")
+    if breakout_extension_n is not None and breakout_extension_n > 2.0:
+        tags.append("延伸偏大")
+    return tags
+
+
+def sort_matches_by_potential(matches: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Highest potential_score first; code as stable tie-break."""
+
+    def _score(row: Dict[str, Any]) -> float:
+        try:
+            return float(row.get("potential_score") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return sorted(
+        list(matches or []),
+        key=lambda row: (-_score(row), str(row.get("code") or "")),
+    )
+
+
+def _report_cell(value: Any, digits: Optional[int] = None) -> str:
+    if value is None or value == "":
+        return "暂无"
+    if digits is not None:
+        try:
+            return str(round(float(value), digits))
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def format_match_result_table_lines(matches: List[Dict[str, Any]]) -> List[str]:
+    """Markdown table for 匹配结果, ranked by potential_score."""
+    lines = [
+        "| 代号 | 名称 | 收盘 | 档 | 分 | S1开 | 趋势 | 延伸N | 量比 | S1 | S2 | S1近H | S2近H | S1近C | S2近C |",
+        "|------|------|------|----|----|------|------|------|------|----|----|------|------|------|------|",
+    ]
+    for m in matches:
+        lines.append(
+            f"| [{m.get('code', '')}]({m.get('url', '')}) | {m.get('name', '')} "
+            f"| {_report_cell(m.get('close'))} "
+            f"| {_report_cell(m.get('potential_tier'))} "
+            f"| {_report_cell(m.get('potential_score'))} "
+            f"| {'是' if m.get('s1_entry_allowed') else '否'} "
+            f"| {'通过' if m.get('turtle_trend_ok') else '未过'} "
+            f"| {_report_cell(m.get('breakout_extension_n'))} "
+            f"| {_report_cell(m.get('volume_ratio'))} "
+            f"| {'✅' if m.get('s1_breakout') else '❌'} "
+            f"| {'✅' if m.get('s2_breakout') else '❌'} "
+            f"| {format_recent_breakout_timing(m.get('s1_recent_high_timing'))} "
+            f"| {format_recent_breakout_timing(m.get('s2_recent_high_timing'))} "
+            f"| {format_recent_breakout_timing(m.get('s1_recent_close_timing'))} "
+            f"| {format_recent_breakout_timing(m.get('s2_recent_close_timing'))} |"
+        )
+    return lines
+
+
+def format_match_technical_lines(match: Dict[str, Any]) -> List[str]:
+    """Technical / Turtle / potential detail block for one match."""
+    code = match.get("code", "")
+    name = match.get("name", "")
+    ma_bits = []
+    for key in ("ma5", "ma10", "ma20", "ma60"):
+        val = match.get(key)
+        if val is not None:
+            ma_bits.append(f"{key.upper()}={val}")
+    ma_line = ", ".join(ma_bits) if ma_bits else "均线暂无"
+    alignment = match.get("ma_alignment") or match.get("trend_status") or "暂无"
+    rsi_line = (
+        f"RSI6={match.get('rsi_6', '暂无')}, RSI12={match.get('rsi_12', '暂无')}"
+        f" ({match.get('rsi_status') or '暂无'})"
+    )
+    macd_line = (
+        f"MACD={match.get('macd_status') or '暂无'}"
+        f" DIF={match.get('macd_dif', '暂无')} DEA={match.get('macd_dea', '暂无')}"
+    )
+    if match.get("macd_signal"):
+        macd_line += f" — {match.get('macd_signal')}"
+    pattern_text = format_pattern_names(match.get("kline_patterns") or [])
+    n_val = match.get("n")
+    stop_2n = match.get("stop_long_2n")
+    ext_n = match.get("breakout_extension_n")
+    trend_ok = match.get("turtle_trend_ok")
+    trend_rule = match.get("turtle_trend_rule") or "暂无"
+    s1_win = match.get("s1_last_was_winner")
+    s1_ok = match.get("s1_entry_allowed")
+    tier = match.get("potential_tier") or "暂无"
+    score = match.get("potential_score")
+    reasons = match.get("potential_reasons") or []
+    reason_text = " — " + ", ".join(str(r) for r in reasons) if reasons else ""
+    turnover = match.get("avg_turnover_20")
+    vol_ratio = match.get("volume_ratio")
+    vol_ok = match.get("volume_confirm")
+    return [
+        f"- **{name} ({code})**: {alignment}",
+        f"  - {ma_line}",
+        f"  - {rsi_line}",
+        f"  - {macd_line}",
+        f"  - 形态: {pattern_text}",
+        (
+            f"  - 海龟: N={n_val if n_val is not None else '暂无'}"
+            f", 2N止损参考={stop_2n if stop_2n is not None else '暂无'}"
+            f", 突破延伸N={ext_n if ext_n is not None else '暂无'}"
+        ),
+        (
+            f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
+            f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
+            f" | S1允许开仓: {'是' if s1_ok else '否'}"
+        ),
+        (
+            "  - 近期突破: "
+            f"S1 High={format_recent_breakout_timing(match.get('s1_recent_high_timing'))}"
+            f" / Close={format_recent_breakout_timing(match.get('s1_recent_close_timing'))}"
+            f" | S2 High={format_recent_breakout_timing(match.get('s2_recent_high_timing'))}"
+            f" / Close={format_recent_breakout_timing(match.get('s2_recent_close_timing'))}"
+        ),
+        (
+            f"  - 潜力: {tier} {score if score is not None else '暂无'}"
+            f"{reason_text}"
+        ),
+        (
+            f"  - 流动性: 量比={vol_ratio if vol_ratio is not None else '暂无'}"
+            f" | 20日均额={turnover if turnover is not None else '暂无'}"
+            f" | {'放量确认' if vol_ok else '未放量确认'}"
+        ),
+    ]
+
+
 def _turtle_score_delta(
     *,
     s1_breakout: bool,
@@ -850,7 +1102,11 @@ def merge_stocks_with_holdings(
 
 
 def _rsi_macd_indicator_score(technicals: Optional[Dict[str, Any]]) -> float:
-    """Bounded RSI/MACD contribution to potential_score (−12 … +12). Soft-fail to 0."""
+    """Bounded RSI/MACD contribution to potential_score (−12 … +12). Soft-fail to 0.
+
+    MACD still rewards trend continuation. RSI oversold/overbought are neutral so a
+    Donchian breakout rank is not mixed with mean-reversion bias.
+    """
     tech = technicals or {}
     macd_weights = {
         "零轴上金叉": 8.0,
@@ -861,12 +1117,13 @@ def _rsi_macd_indicator_score(technicals: Optional[Dict[str, Any]]) -> float:
         "下穿零轴": -5.0,
         "死叉": -6.0,
     }
+    # Trend-following rank: do not treat RSI oversold as bullish or overbought as a dump.
     rsi_weights = {
-        "超卖": 6.0,
-        "强势买入": 4.0,
+        "超卖": 0.0,
+        "强势买入": 2.0,
         "中性": 0.0,
-        "弱势": -3.0,
-        "超买": -4.0,
+        "弱势": -2.0,
+        "超买": 0.0,
     }
     macd_status = str(tech.get("macd_status") or "").strip()
     rsi_status = str(tech.get("rsi_status") or "").strip()
@@ -976,6 +1233,15 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
     s2_recent_close_breakout, s2_recent_close_timing = _recent_donchian_first_cross(
         work['Close'], entry55,
     )
+    volume_metrics = _volume_liquidity_metrics(
+        work,
+        bar_offset=_recent_breakout_bar_offset(
+            s1_recent_high_timing,
+            s2_recent_high_timing,
+            s1_recent_close_timing,
+            s2_recent_close_timing,
+        ),
+    )
 
     n_value = _compute_n(work, window=20)
     turtle_trend_ok, turtle_trend_rule = _adaptive_turtle_trend_ok(work)
@@ -1038,6 +1304,30 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         turtle_trend_ok=turtle_trend_ok,
         s1_last_was_winner=s1_last_was_winner,
     )
+    setup_score = _setup_quality_score_delta(
+        s1_recent_high_breakout=s1_recent_high_breakout,
+        s2_recent_high_breakout=s2_recent_high_breakout,
+        s1_recent_close_breakout=s1_recent_close_breakout,
+        s2_recent_close_breakout=s2_recent_close_breakout,
+        volume_confirm=bool(volume_metrics.get("volume_confirm")),
+        volume_ratio=volume_metrics.get("volume_ratio"),
+        breakout_extension_n=breakout_extension_n,
+        avg_turnover_20=volume_metrics.get("avg_turnover_20"),
+        close=close_value,
+    )
+    potential_reasons = _potential_reason_tags(
+        s1_breakout=s1_breakout,
+        s1_recent_high_breakout=s1_recent_high_breakout,
+        s2_recent_high_breakout=s2_recent_high_breakout,
+        s1_recent_close_breakout=s1_recent_close_breakout,
+        s2_recent_close_breakout=s2_recent_close_breakout,
+        turtle_trend_ok=turtle_trend_ok,
+        s1_entry_allowed=s1_entry_allowed,
+        s1_last_was_winner=s1_last_was_winner,
+        volume_confirm=bool(volume_metrics.get("volume_confirm")),
+        volume_ratio=volume_metrics.get("volume_ratio"),
+        breakout_extension_n=breakout_extension_n,
+    )
     potential_score = max(
         0.0,
         min(
@@ -1046,6 +1336,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
             + kline_pattern_score
             + rsi_macd_score
             + turtle_score
+            + setup_score
             - min(20.0, s1_gap_pct + s2_gap_pct),
         ),
     )
@@ -1083,6 +1374,8 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         's1_last_was_winner': s1_last_was_winner,
         's1_entry_allowed': s1_entry_allowed,
         'turtle_score': round(turtle_score, 2),
+        'setup_score': round(setup_score, 2),
+        'potential_reasons': potential_reasons,
         's1_gap_pct': round(s1_gap_pct, 2),
         's2_gap_pct': round(s2_gap_pct, 2),
         'close_vs_entry': close_vs_entry,
@@ -1125,6 +1418,7 @@ def compute_signals_full(df: pd.DataFrame) -> Dict[str, Any]:
         'rsi_macd_score': round(rsi_macd_score, 2),
         'potential_score': round(potential_score, 2),
         'potential_tier': potential_tier,
+        **volume_metrics,
         **technicals,
     }
 
@@ -1514,10 +1808,10 @@ def scan_stocks(
         total_ms,
     )
 
-    matches = [
+    matches = sort_matches_by_potential([
         r for r in results
         if r.get('status') == 'ok' and any(r.get(cond) for cond in wanted)
-    ]
+    ])
     no_price = [r for r in results if r.get('status') == 'empty']
     ok_results = [r for r in results if r and r.get('status') == 'ok']
 
@@ -1783,78 +2077,15 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     lines.extend(_format_etnet_top_section(payload.get("etnet_top")))
     lines.extend(_format_holdings_section(payload.get("holdings")))
 
+    matches = sort_matches_by_potential(matches)
     if matches:
         lines.append(f"## 匹配结果（{len(matches)}）\n")
-        lines.append(
-            "| 代号 | 名称 | 收盘 | S1 | S2 | S1近H | S2近H | S1近C | S2近C | 收盘≥S1 | 收盘≥S2 |"
-        )
-        lines.append(
-            "|------|------|------|----|----|------|------|------|------|--------|--------|"
-        )
-        for m in matches:
-            lines.append(
-                f"| [{m['code']}]({m.get('url', '')}) | {m['name']} | {m['close']} "
-                f"| {'✅' if m['s1_breakout'] else '❌'} "
-                f"| {'✅' if m['s2_breakout'] else '❌'} "
-                f"| {format_recent_breakout_timing(m.get('s1_recent_high_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s2_recent_high_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s1_recent_close_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s2_recent_close_timing'))} "
-                f"| {'✅' if m['close_vs_entry'] else '❌'} "
-                f"| {'✅' if m['close_vs_s2_entry'] else '❌'} |"
-            )
+        lines.extend(format_match_result_table_lines(matches))
         lines.append("")
         lines.append("### 技术指标与形态\n")
         for m in matches:
-            code = m.get('code', '')
-            name = m.get('name', '')
-            ma_bits = []
-            for key in ('ma5', 'ma10', 'ma20', 'ma60'):
-                val = m.get(key)
-                if val is not None:
-                    ma_bits.append(f"{key.upper()}={val}")
-            ma_line = ', '.join(ma_bits) if ma_bits else '均线暂无'
-            alignment = m.get('ma_alignment') or m.get('trend_status') or '暂无'
-            rsi_line = (
-                f"RSI6={m.get('rsi_6', '暂无')}, RSI12={m.get('rsi_12', '暂无')}"
-                f" ({m.get('rsi_status') or '暂无'})"
-            )
-            macd_line = (
-                f"MACD={m.get('macd_status') or '暂无'}"
-                f" DIF={m.get('macd_dif', '暂无')} DEA={m.get('macd_dea', '暂无')}"
-            )
-            if m.get('macd_signal'):
-                macd_line += f" — {m.get('macd_signal')}"
-            pattern_text = format_pattern_names(m.get('kline_patterns') or [])
-            lines.append(f"- **{name} ({code})**: {alignment}")
-            lines.append(f"  - {ma_line}")
-            lines.append(f"  - {rsi_line}")
-            lines.append(f"  - {macd_line}")
-            lines.append(f"  - 形态: {pattern_text}")
-            n_val = m.get("n")
-            stop_2n = m.get("stop_long_2n")
-            ext_n = m.get("breakout_extension_n")
-            trend_ok = m.get("turtle_trend_ok")
-            trend_rule = m.get("turtle_trend_rule") or "暂无"
-            s1_win = m.get("s1_last_was_winner")
-            s1_ok = m.get("s1_entry_allowed")
-            lines.append(
-                f"  - 海龟: N={n_val if n_val is not None else '暂无'}"
-                f", 2N止损参考={stop_2n if stop_2n is not None else '暂无'}"
-                f", 突破延伸N={ext_n if ext_n is not None else '暂无'}"
-            )
-            lines.append(
-                f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
-                f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
-                f" | S1允许开仓: {'是' if s1_ok else '否'}"
-            )
-            lines.append(
-                "  - 近期突破: "
-                f"S1 High={format_recent_breakout_timing(m.get('s1_recent_high_timing'))}"
-                f" / Close={format_recent_breakout_timing(m.get('s1_recent_close_timing'))}"
-                f" | S2 High={format_recent_breakout_timing(m.get('s2_recent_high_timing'))}"
-                f" / Close={format_recent_breakout_timing(m.get('s2_recent_close_timing'))}"
-            )
+            lines.extend(format_match_technical_lines(m))
+            lines.append("")
         lines.append("")
     else:
         lines.append("没有股票符合所选条件。\n")

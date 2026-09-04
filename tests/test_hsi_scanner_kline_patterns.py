@@ -124,7 +124,11 @@ class TestHSIScannerKlinePatterns(unittest.TestCase):
         self.assertGreater(bullish, 0)
         self.assertLess(bearish, 0)
         self.assertEqual(_rsi_macd_indicator_score({}), 0.0)
-        self.assertEqual(_rsi_macd_indicator_score({"macd_status": "零轴上金叉", "rsi_status": "超卖"}), 12.0)
+        self.assertEqual(_rsi_macd_indicator_score({"macd_status": "零轴上金叉", "rsi_status": "超卖"}), 8.0)
+        self.assertEqual(
+            _rsi_macd_indicator_score({"macd_status": "金叉", "rsi_status": "超买"}),
+            _rsi_macd_indicator_score({"macd_status": "金叉", "rsi_status": "中性"}),
+        )
 
 
 if __name__ == "__main__":

@@ -11,10 +11,11 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from src.services.hsi_holdings import normalize_holding_code
 from src.services.hsi_scanner import (
-    format_pattern_names,
-    format_recent_breakout_timing,
+    format_match_result_table_lines,
+    format_match_technical_lines,
     get_scan_config_from_env,
     scan_stocks,
+    sort_matches_by_potential,
 )
 from src.services.stock_universes import HK_ALL_STOCKS_PATH, load_hk_all_stocks
 
@@ -25,6 +26,8 @@ DEFAULT_MAX_WORKERS = 8
 DEFAULT_NEWS_MAX_AGE_DAYS = 2
 DEFAULT_PERIOD = "3mo"
 DEFAULT_CONDITIONS = "s1_breakout,s2_breakout"
+DEFAULT_MIN_PRICE = 0.1
+DEFAULT_MIN_AVG_TURNOVER = 500_000.0
 
 
 class HkUniverseError(RuntimeError):
@@ -53,6 +56,101 @@ def resolve_hk_news_max_age_days(max_age_days: Optional[int] = None) -> int:
     if max_age_days is not None:
         return max(1, int(max_age_days))
     return max(1, _env_int("HK_NEWS_MAX_AGE_DAYS", DEFAULT_NEWS_MAX_AGE_DAYS))
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def resolve_hk_min_price(min_price: Optional[float] = None) -> float:
+    """Minimum last close for HK matches (0 disables). Default 0.1."""
+    if min_price is not None:
+        return max(0.0, float(min_price))
+    return max(0.0, _env_float("HK_SCAN_MIN_PRICE", DEFAULT_MIN_PRICE))
+
+
+def resolve_hk_min_avg_turnover(min_avg_turnover: Optional[float] = None) -> float:
+    """Minimum 20-day average turnover for HK matches (0 disables). Default 500000."""
+    if min_avg_turnover is not None:
+        return max(0.0, float(min_avg_turnover))
+    return max(0.0, _env_float("HK_SCAN_MIN_AVG_TURNOVER", DEFAULT_MIN_AVG_TURNOVER))
+
+
+def resolve_hk_require_volume_confirm(require_volume_confirm: Optional[bool] = None) -> bool:
+    """When true, drop names with volume data that fail volume_confirm."""
+    if require_volume_confirm is not None:
+        return bool(require_volume_confirm)
+    raw = (os.getenv("HK_SCAN_REQUIRE_VOLUME_CONFIRM") or "").strip().lower()
+    if not raw:
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return False
+
+
+def _as_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def liquidity_filter_reason(
+    row: Dict[str, Any],
+    *,
+    min_price: float,
+    min_avg_turnover: float,
+    require_volume_confirm: bool,
+) -> Optional[str]:
+    """Return a reason if the match fails HK liquidity gates; missing data does not fail."""
+    close = _as_float(row.get("close"))
+    if min_price > 0 and close is not None and close < min_price:
+        return f"close {close} < min_price {min_price}"
+    turnover = _as_float(row.get("avg_turnover_20"))
+    if min_avg_turnover > 0 and turnover is not None and turnover < min_avg_turnover:
+        return f"avg_turnover_20 {turnover} < {min_avg_turnover}"
+    if require_volume_confirm:
+        ratio = _as_float(row.get("volume_ratio"))
+        if ratio is not None and not bool(row.get("volume_confirm")):
+            return "volume not confirmed"
+    return None
+
+
+def apply_hk_liquidity_gates(
+    matches: Sequence[Dict[str, Any]],
+    *,
+    min_price: Optional[float] = None,
+    min_avg_turnover: Optional[float] = None,
+    require_volume_confirm: Optional[bool] = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Split matches into kept vs liquidity-filtered (missing volume/price does not drop)."""
+    price_floor = resolve_hk_min_price(min_price)
+    turnover_floor = resolve_hk_min_avg_turnover(min_avg_turnover)
+    require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
+    kept: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    for row in matches or []:
+        reason = liquidity_filter_reason(
+            row,
+            min_price=price_floor,
+            min_avg_turnover=turnover_floor,
+            require_volume_confirm=require_vol,
+        )
+        if reason:
+            dropped.append({**row, "liquidity_filter_reason": reason})
+        else:
+            kept.append(row)
+    return kept, dropped
 
 
 def normalize_hk_code(raw: Any) -> Optional[str]:
@@ -190,68 +288,15 @@ def fetch_tencent_news_for_matches(
     return out
 
 
-def _format_match_technical_block(match: Dict[str, Any]) -> List[str]:
-    code = match.get("code", "")
-    name = match.get("name", "")
-    ma_bits = []
-    for key in ("ma5", "ma10", "ma20", "ma60"):
-        val = match.get(key)
-        if val is not None:
-            ma_bits.append(f"{key.upper()}={val}")
-    ma_line = ", ".join(ma_bits) if ma_bits else "均线暂无"
-    alignment = match.get("ma_alignment") or match.get("trend_status") or "暂无"
-    rsi_line = (
-        f"RSI6={match.get('rsi_6', '暂无')}, RSI12={match.get('rsi_12', '暂无')}"
-        f" ({match.get('rsi_status') or '暂无'})"
-    )
-    macd_line = (
-        f"MACD={match.get('macd_status') or '暂无'}"
-        f" DIF={match.get('macd_dif', '暂无')} DEA={match.get('macd_dea', '暂无')}"
-    )
-    if match.get("macd_signal"):
-        macd_line += f" — {match.get('macd_signal')}"
-    pattern_text = format_pattern_names(match.get("kline_patterns") or [])
-    n_val = match.get("n")
-    stop_2n = match.get("stop_long_2n")
-    ext_n = match.get("breakout_extension_n")
-    trend_ok = match.get("turtle_trend_ok")
-    trend_rule = match.get("turtle_trend_rule") or "暂无"
-    s1_win = match.get("s1_last_was_winner")
-    s1_ok = match.get("s1_entry_allowed")
-    return [
-        f"- **{name} ({code})**: {alignment}",
-        f"  - {ma_line}",
-        f"  - {rsi_line}",
-        f"  - {macd_line}",
-        f"  - 形态: {pattern_text}",
-        (
-            f"  - 海龟: N={n_val if n_val is not None else '暂无'}"
-            f", 2N止损参考={stop_2n if stop_2n is not None else '暂无'}"
-            f", 突破延伸N={ext_n if ext_n is not None else '暂无'}"
-        ),
-        (
-            f"  - 趋势过滤: {'通过' if trend_ok else '未通过'}（{trend_rule}）"
-            f" | S1上次盈利跳过: {'是' if s1_win else '否'}"
-            f" | S1允许开仓: {'是' if s1_ok else '否'}"
-        ),
-        (
-            "  - 近期突破: "
-            f"S1 High={format_recent_breakout_timing(match.get('s1_recent_high_timing'))}"
-            f" / Close={format_recent_breakout_timing(match.get('s1_recent_close_timing'))}"
-            f" | S2 High={format_recent_breakout_timing(match.get('s2_recent_high_timing'))}"
-            f" / Close={format_recent_breakout_timing(match.get('s2_recent_close_timing'))}"
-        ),
-    ]
-
-
 def format_hk_scan_report(
     payload: Dict[str, Any],
     news_by_code: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
     """Build a no-LLM HK scan report: matches + technicals + Tencent news."""
-    matches = payload.get("matches") or []
+    matches = sort_matches_by_potential(payload.get("matches") or [])
     stats = payload.get("stats") or {}
     news_map = news_by_code or {}
+    filtered_n = len(payload.get("filtered_illiquid") or [])
 
     if payload.get("skipped"):
         skip_reason = payload.get("skip_reason") or "今日休市"
@@ -272,7 +317,8 @@ def format_hk_scan_report(
         f"- 扫描池: {stats.get('tickers', '?')} 只",
         f"- 股票池来源: {payload.get('universe_source') or 'resources/universes/hk_all_stocks.json'}",
         f"- 匹配条件: {', '.join(payload.get('conditions') or []) or '暂无'}",
-        f"- 匹配数: {len(matches)}",
+        f"- 匹配数: {len(matches)}（按潜力分降序）",
+        f"- 流动性过滤: {filtered_n}",
         f"- 无行情: {len(payload.get('no_price') or [])}",
         f"- 缓存命中: {stats.get('cache_hits', 0)}",
         f"- 批量下载: {stats.get('batch_downloaded', 0)}",
@@ -285,29 +331,11 @@ def format_hk_scan_report(
 
     if matches:
         lines.append(f"## 匹配结果（{len(matches)}）\n")
-        lines.append(
-            "| 代号 | 名称 | 收盘 | S1 | S2 | S1近H | S2近H | S1近C | S2近C | 收盘≥S1 | 收盘≥S2 |"
-        )
-        lines.append(
-            "|------|------|------|----|----|------|------|------|------|--------|--------|"
-        )
-        for m in matches:
-            lines.append(
-                f"| [{m.get('code', '')}]({m.get('url', '')}) | {m.get('name', '')} "
-                f"| {m.get('close', '暂无')} "
-                f"| {'✅' if m.get('s1_breakout') else '❌'} "
-                f"| {'✅' if m.get('s2_breakout') else '❌'} "
-                f"| {format_recent_breakout_timing(m.get('s1_recent_high_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s2_recent_high_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s1_recent_close_timing'))} "
-                f"| {format_recent_breakout_timing(m.get('s2_recent_close_timing'))} "
-                f"| {'✅' if m.get('close_vs_entry') else '❌'} "
-                f"| {'✅' if m.get('close_vs_s2_entry') else '❌'} |"
-            )
+        lines.extend(format_match_result_table_lines(matches))
         lines.append("")
         lines.append("### 技术指标与形态\n")
         for m in matches:
-            lines.extend(_format_match_technical_block(m))
+            lines.extend(format_match_technical_lines(m))
             lines.append("")
     else:
         lines.append("没有股票符合所选条件。\n")
@@ -358,6 +386,9 @@ def run_hk_stocks_scan(
     save_report: bool = True,
     stocks: Optional[List[Dict[str, str]]] = None,
     universe_path: Optional[Path | str] = None,
+    min_price: Optional[float] = None,
+    min_avg_turnover: Optional[float] = None,
+    require_volume_confirm: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Scan all listed HK stocks with Turtle signals + match-only Tencent news.
 
@@ -380,6 +411,9 @@ def run_hk_stocks_scan(
     resolved_batch = resolve_hk_scan_batch_size(batch_size)
     resolved_news_days = resolve_hk_news_max_age_days(news_max_age_days)
     resolved_universe_path = resolve_hk_universe_path(universe_path)
+    resolved_min_price = resolve_hk_min_price(min_price)
+    resolved_min_turnover = resolve_hk_min_avg_turnover(min_avg_turnover)
+    resolved_require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
 
     if stocks is not None:
         universe = list(stocks)
@@ -400,6 +434,22 @@ def run_hk_stocks_scan(
     )
     payload["universe_source"] = universe_source
     payload["universe_size"] = len(universe)
+
+    if not payload.get("skipped"):
+        kept, dropped = apply_hk_liquidity_gates(
+            payload.get("matches") or [],
+            min_price=resolved_min_price,
+            min_avg_turnover=resolved_min_turnover,
+            require_volume_confirm=resolved_require_vol,
+        )
+        payload["matches"] = sort_matches_by_potential(kept)
+        payload["filtered_illiquid"] = dropped
+        stats = dict(payload.get("stats") or {})
+        stats["liquidity_filtered"] = len(dropped)
+        stats["min_price"] = resolved_min_price
+        stats["min_avg_turnover"] = resolved_min_turnover
+        stats["require_volume_confirm"] = resolved_require_vol
+        payload["stats"] = stats
 
     news_items: List[Dict[str, Any]] = []
     if not payload.get("skipped"):
@@ -430,4 +480,7 @@ def run_hk_stocks_scan(
         "news_max_age_days": resolved_news_days,
         "max_workers": max(1, int(resolved_workers)),
         "universe_path": str(resolved_universe_path),
+        "min_price": resolved_min_price,
+        "min_avg_turnover": resolved_min_turnover,
+        "require_volume_confirm": resolved_require_vol,
     }

@@ -10,12 +10,15 @@ from src.services.hsi_scanner import (
     _adaptive_turtle_trend_ok,
     _compute_n,
     _recent_donchian_first_cross,
+    _rsi_macd_indicator_score,
     _s1_last_breakout_was_winner,
+    _setup_quality_score_delta,
     _turtle_score_delta,
     compute_signals_full,
     format_recent_breakout_timing,
     format_scan_report,
     parse_conditions,
+    sort_matches_by_potential,
 )
 
 
@@ -156,6 +159,12 @@ def test_format_scan_report_includes_turtle_chinese_lines():
                 "s1_recent_close_timing": "previous",
                 "s2_recent_high_timing": None,
                 "s2_recent_close_timing": None,
+                "potential_score": 72.5,
+                "potential_tier": "B",
+                "potential_reasons": ["S1最高价首破", "趋势通过", "放量"],
+                "volume_ratio": 1.8,
+                "volume_confirm": True,
+                "avg_turnover_20": 12_000_000,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -172,8 +181,12 @@ def test_format_scan_report_includes_turtle_chinese_lines():
     assert "趋势过滤: 通过" in text
     assert "S1允许开仓: 是" in text
     assert "| S1近H | S2近H | S1近C | S2近C |" in text
+    assert "| 档 | 分 | S1开 | 趋势 | 延伸N | 量比 |" in text
+    assert "| B | 72.5 | 是 | 通过 | 1.2 | 1.8 |" in text
     assert "| 今日 | 无 | 前一交易日 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=前一交易日 | S2 High=无 / Close=无" in text
+    assert "潜力: B 72.5 — S1最高价首破, 趋势通过, 放量" in text
+    assert "流动性: 量比=1.8" in text
 
 
 def _flat_then_spike_df(
@@ -279,3 +292,66 @@ def test_format_recent_breakout_timing_labels():
     assert format_recent_breakout_timing("today") == "今日"
     assert format_recent_breakout_timing("previous") == "前一交易日"
     assert format_recent_breakout_timing(None) == "无"
+
+
+def test_rsi_oversold_is_neutral_for_breakout_rank():
+    oversold = _rsi_macd_indicator_score({"macd_status": "多头", "rsi_status": "超卖"})
+    overbought = _rsi_macd_indicator_score({"macd_status": "多头", "rsi_status": "超买"})
+    assert oversold == overbought
+
+
+def test_setup_quality_rewards_close_first_cross_and_volume():
+    strong = _setup_quality_score_delta(
+        s1_recent_high_breakout=False,
+        s2_recent_high_breakout=False,
+        s1_recent_close_breakout=False,
+        s2_recent_close_breakout=True,
+        volume_confirm=True,
+        volume_ratio=1.5,
+        breakout_extension_n=0.3,
+        avg_turnover_20=5_000_000,
+        close=10.0,
+    )
+    weak = _setup_quality_score_delta(
+        s1_recent_high_breakout=True,
+        s2_recent_high_breakout=False,
+        s1_recent_close_breakout=False,
+        s2_recent_close_breakout=False,
+        volume_confirm=False,
+        volume_ratio=0.4,
+        breakout_extension_n=2.5,
+        avg_turnover_20=1_000,
+        close=0.05,
+    )
+    assert strong > weak
+
+
+def test_compute_signals_full_includes_volume_and_potential_reasons():
+    df = _trending_df(90)
+    df.iloc[-1, df.columns.get_loc("High")] = float(df["High"].iloc[-21:-1].max()) + 5.0
+    df.iloc[-1, df.columns.get_loc("Close")] = float(df["Close"].iloc[-2]) + 4.0
+    df.iloc[-1, df.columns.get_loc("Volume")] = 3e6
+    out = compute_signals_full(df)
+    assert out.get("volume_ratio") is not None
+    assert out["volume_confirm"] is True
+    assert "setup_score" in out
+    assert isinstance(out.get("potential_reasons"), list)
+    assert out.get("potential_tier") in {"A", "B", "C", "D"}
+
+
+def test_sort_matches_by_potential_and_format_order():
+    payload = {
+        "matches": [
+            {"code": "0005.HK", "name": "汇丰", "close": 80, "potential_score": 40, "url": ""},
+            {"code": "0700.HK", "name": "腾讯", "close": 400, "potential_score": 90, "url": ""},
+        ],
+        "no_price": [],
+        "stats": {"tickers": 2, "total_ms": 1},
+        "skipped": False,
+    }
+    ordered = sort_matches_by_potential(payload["matches"])
+    assert [m["code"] for m in ordered] == ["0700.HK", "0005.HK"]
+    text = format_scan_report(payload)
+    tencent_pos = text.index("0700.HK")
+    hsbc_pos = text.index("0005.HK")
+    assert tencent_pos < hsbc_pos

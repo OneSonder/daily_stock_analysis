@@ -11,6 +11,7 @@ import pytest
 
 from src.services.hk_stock_scanner import (
     HkUniverseError,
+    apply_hk_liquidity_gates,
     fetch_tencent_news_for_matches,
     format_hk_scan_report,
     load_hk_stocks_universe,
@@ -118,6 +119,12 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
                 "s1_recent_close_timing": None,
                 "s2_recent_high_timing": "previous",
                 "s2_recent_close_timing": None,
+                "potential_score": 81,
+                "potential_tier": "A",
+                "potential_reasons": ["S1最高价首破", "趋势通过"],
+                "volume_ratio": 1.4,
+                "volume_confirm": True,
+                "avg_turnover_20": 8_000_000,
                 "ma20": 395,
                 "rsi_12": 55,
                 "macd_status": "多头",
@@ -148,8 +155,13 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
     assert "### 技术指标与形态" in text
     assert "海龟: N=5.0" in text
     assert "| S1近H | S2近H | S1近C | S2近C |" in text
+    assert "| 档 | 分 | S1开 | 趋势 | 延伸N | 量比 |" in text
+    assert "| A | 81 | 是 | 通过 | 1.2 | 1.4 |" in text
     assert "| 今日 | 前一交易日 | 无 | 无 |" in text
     assert "近期突破: S1 High=今日 / Close=无 | S2 High=前一交易日 / Close=无" in text
+    assert "潜力: A 81" in text
+    assert "流动性过滤: 0" in text
+    assert "按潜力分降序" in text
     assert "resources/universes/hk_all_stocks.json" in text
     assert "## 腾讯新闻（仅匹配股）" in text
     assert "腾讯营收领先" in text
@@ -208,3 +220,82 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
     assert Path(result["report_path"]).exists()
     assert "匹配结果" in result["report_text"]
     assert "DeepSeek" not in result["report_text"]
+
+
+def test_apply_hk_liquidity_gates_drops_penny_and_thin_turnover():
+    kept, dropped = apply_hk_liquidity_gates(
+        [
+            {"code": "PENNY.HK", "close": 0.05, "avg_turnover_20": 2_000_000},
+            {"code": "THIN.HK", "close": 10.0, "avg_turnover_20": 1_000},
+            {"code": "0700.HK", "close": 400.0, "avg_turnover_20": 8_000_000, "potential_score": 80},
+            {"code": "NODATA.HK", "close": 12.0},
+        ],
+        min_price=0.1,
+        min_avg_turnover=500_000,
+        require_volume_confirm=False,
+    )
+    codes = {row["code"] for row in kept}
+    assert codes == {"0700.HK", "NODATA.HK"}
+    reasons = {row["code"]: row["liquidity_filter_reason"] for row in dropped}
+    assert "PENNY.HK" in reasons
+    assert "THIN.HK" in reasons
+
+
+@patch("src.services.hk_stock_scanner.fetch_tencent_news_for_matches")
+@patch("src.services.hk_stock_scanner.scan_stocks")
+@patch("src.services.hk_stock_scanner.load_hk_stocks_universe")
+def test_run_hk_stocks_scan_filters_then_ranks_before_news(
+    mock_universe,
+    mock_scan,
+    mock_news,
+    tmp_path: Path,
+):
+    mock_universe.return_value = [{"code": "0700.HK", "name": "腾讯"}]
+    mock_scan.return_value = {
+        "matches": [
+            {
+                "code": "THIN.HK",
+                "name": "薄",
+                "close": 10.0,
+                "avg_turnover_20": 100.0,
+                "potential_score": 99,
+                "s1_breakout": True,
+            },
+            {
+                "code": "0700.HK",
+                "name": "腾讯",
+                "close": 400.0,
+                "avg_turnover_20": 9_000_000,
+                "potential_score": 70,
+                "s1_breakout": True,
+            },
+            {
+                "code": "9988.HK",
+                "name": "阿里",
+                "close": 90.0,
+                "avg_turnover_20": 7_000_000,
+                "potential_score": 88,
+                "s1_breakout": True,
+            },
+        ],
+        "results": [],
+        "no_price": [],
+        "stats": {"tickers": 3, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 3},
+        "skipped": False,
+        "conditions": ["s1_breakout"],
+    }
+    mock_news.return_value = []
+
+    result = run_hk_stocks_scan(
+        check_trading_day=False,
+        reports_dir=tmp_path,
+        save_report=False,
+        min_price=0.1,
+        min_avg_turnover=500_000,
+        require_volume_confirm=False,
+    )
+    codes = [m["code"] for m in result["payload"]["matches"]]
+    assert codes == ["9988.HK", "0700.HK"]
+    assert result["payload"]["stats"]["liquidity_filtered"] == 1
+    news_matches = mock_news.call_args.args[0]
+    assert [m["code"] for m in news_matches] == ["9988.HK", "0700.HK"]
