@@ -20,9 +20,10 @@ from src.services.hsi_scanner import (
 
 logger = logging.getLogger(__name__)
 
-# Default enrich caps. Match: None/all = all; 0 = none. ET Net: 0 = none.
-DEFAULT_ENRICH_TOP_N: Optional[int] = None  # all matches
-DEFAULT_ENRICH_ETNET_TOP_N: int = 10
+# Default enrich caps. Match: None/all = all of current matches (monitor union).
+# ET Net extras: 0 = none (tables still render; not sent to LLM).
+DEFAULT_ENRICH_TOP_N: Optional[int] = None  # all current matches
+DEFAULT_ENRICH_ETNET_TOP_N: int = 0
 
 
 def _resolve_enrich_cap(

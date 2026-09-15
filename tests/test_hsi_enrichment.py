@@ -151,11 +151,11 @@ def test_resolve_enrich_etnet_top_n_from_env(monkeypatch):
     monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "all")
     assert resolve_enrich_etnet_top_n() is None
     monkeypatch.setenv("HSI_ENRICH_ETNET_TOP_N", "bad")
-    assert resolve_enrich_etnet_top_n() == 10
+    assert resolve_enrich_etnet_top_n() == 0
     assert resolve_enrich_etnet_top_n(2) == 2
     assert resolve_enrich_etnet_top_n(0) == 0
     monkeypatch.delenv("HSI_ENRICH_ETNET_TOP_N", raising=False)
-    assert resolve_enrich_etnet_top_n() == 10
+    assert resolve_enrich_etnet_top_n() == 0
 
 def test_build_lite_context_uses_quote_and_signals():
     match = {

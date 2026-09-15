@@ -20,6 +20,14 @@ def _step_env(path: Path, job_name: str, step_name: str) -> dict[str, str]:
     return step["env"]
 
 
+def test_hsi_scan_defaults_to_monitor_period_and_no_etnet_llm_extras():
+    raw = HSI_WORKFLOW.read_text(encoding="utf-8")
+    assert "default: '1y'" in raw
+    assert "HSI_SCAN_MONITOR" in raw
+    assert "inputs.etnet_top_n || '0'" in raw
+    assert "HSI_SCAN_PERIOD: ${{ inputs.period || '1y' }}" in raw
+
+
 def test_hsi_scan_reads_llm_api_keys_only_from_repository_secrets():
     env = _step_env(HSI_WORKFLOW, "hsi-scan", "Run HSI scan + lite enrichment")
 

@@ -9,14 +9,20 @@ name: HK Stocks Turtle Scan
       period:
         description: 'History period'
         required: false
-        default: '3mo'
+        default: '1y'
         type: choice
         options: ['5d', '1mo', '3mo', '6mo', '1y', '2y']
       conditions:
-        description: 'Conditions to match (defaults s1_breakout,s2_breakout; recent: s1_recent_high_breakout,s2_recent_high_breakout,s1_recent_close_breakout,s2_recent_close_breakout)'
+        description: 'Legacy OR dump only when monitor=false (defaults s1_breakout,s2_breakout)'
         required: false
         default: 's1_breakout,s2_breakout'
         type: string
+      monitor:
+        description: 'Daily monitor two lists (true) or legacy OR conditions dump (false)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
       max_workers:
         description: 'Parallel evaluate workers'
         required: false
@@ -35,8 +41,9 @@ name: HK Stocks Turtle Scan
 
 env:
   PYTHONUNBUFFERED: '1'
-  HK_SCAN_PERIOD: ${{ inputs.period || '3mo' }}
+  HK_SCAN_PERIOD: ${{ inputs.period || '1y' }}
   HK_SCAN_CONDITIONS: ${{ inputs.conditions || 's1_breakout,s2_breakout' }}
+  HK_SCAN_MONITOR: ${{ inputs.monitor || 'true' }}
   HK_SCAN_MAX_WORKERS: ${{ inputs.max_workers || '8' }}
   HK_SCAN_BATCH_SIZE: ${{ inputs.batch_size || '80' }}
   HK_NEWS_MAX_AGE_DAYS: ${{ inputs.news_max_age_days || '2' }}
@@ -82,7 +89,7 @@ jobs:
           from src.services.hk_stock_scanner import run_hk_stocks_scan
 
           result = run_hk_stocks_scan(
-              period=os.getenv("HK_SCAN_PERIOD", "3mo"),
+              period=os.getenv("HK_SCAN_PERIOD", "1y"),
               conditions=os.getenv("HK_SCAN_CONDITIONS", "s1_breakout,s2_breakout"),
               max_workers=int(os.getenv("HK_SCAN_MAX_WORKERS", "8") or "8"),
               batch_size=int(os.getenv("HK_SCAN_BATCH_SIZE", "80") or "80"),
@@ -98,6 +105,8 @@ jobs:
           print(json.dumps(payload.get("stats") or {}, indent=2))
           print(f"Universe: {payload.get('universe_size')} ({payload.get('universe_source')})")
           print(f"Matched: {len(payload.get('matches') or [])} stocks")
+          print(f"Uprising: {len(payload.get('uprising') or [])}")
+          print(f"Reversal: {len(payload.get('reversal') or [])}")
           print(f"News rows: {len(news)}")
           print(f"Report path: {result.get('report_path')}")
           print()

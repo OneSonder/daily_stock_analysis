@@ -1750,6 +1750,7 @@ def get_scan_config_from_env() -> Dict[str, Any]:
         'check_trading_day': os.getenv('HSI_SCAN_CHECK_TRADING_DAY', 'false').lower() not in ('0', 'false', 'no', 'off'),
         'use_multi_source': os.getenv('HSI_SCAN_USE_MULTI_SOURCE', 'true').lower() not in ('0', 'false', 'no', 'off'),
         'schedule_time': os.getenv('HSI_SCAN_SCHEDULE_TIME', '09:30'),
+        'monitor': os.getenv('HSI_SCAN_MONITOR', 'true').lower() not in ('0', 'false', 'no', 'off'),
     }
 
 
@@ -2016,6 +2017,24 @@ def scan_hsi(
         # Prefer all ok results; fall back to matches for older callers.
         scan_rows = payload.get("results") or payload.get("matches") or []
         payload["holdings"] = attach_holdings_to_results(holdings_list, scan_rows)
+        from src.services.daily_monitor import (
+            DEFAULT_HSI_MONITOR_LIMIT,
+            apply_monitor_to_scan_payload,
+            resolve_max_extension_n,
+            resolve_monitor_enabled,
+            resolve_monitor_limit,
+        )
+
+        if resolve_monitor_enabled("HSI_SCAN_MONITOR", default=True):
+            apply_monitor_to_scan_payload(
+                payload,
+                period=period,
+                limit=resolve_monitor_limit(
+                    "HSI_SCAN_MONITOR_LIMIT",
+                    DEFAULT_HSI_MONITOR_LIMIT,
+                ),
+                max_extension_n=resolve_max_extension_n("HSI_SCAN_MAX_EXTENSION_N"),
+            )
     return payload
 
 
@@ -2136,6 +2155,7 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     matches = payload.get('matches', [])
     no_price = payload.get('no_price', [])
     stats = payload.get('stats', {})
+    monitor = bool(payload.get('monitor'))
 
     if payload.get('skipped'):
         skip_reason = payload.get('skip_reason') or "今日休市"
@@ -2151,18 +2171,34 @@ def format_scan_report(payload: Dict[str, Any]) -> str:
     lines.extend(_format_etnet_top_section(payload.get("etnet_top")))
     lines.extend(_format_holdings_section(payload.get("holdings")))
 
-    matches = sort_matches_by_potential(matches)
-    if matches:
-        lines.append(f"## 匹配结果（{len(matches)}）\n")
-        lines.extend(format_match_result_table_lines(matches))
-        lines.append("")
-        lines.append("### 技术指标与形态\n")
-        for m in matches:
-            lines.extend(format_match_technical_lines(m))
-            lines.append("")
-        lines.append("")
+    if monitor:
+        from src.services.daily_monitor import (
+            format_index_regime_lines,
+            format_monitor_list_sections,
+        )
+
+        lines.extend(format_index_regime_lines(payload.get("index_regime")))
+        if stats.get("uprising_total") is not None:
+            lines.append(
+                f"- 监控: 趋势首破 {len(payload.get('uprising') or [])}"
+                f"（候选 {stats.get('uprising_total', 0)}）"
+                f" / 止跌转折 {len(payload.get('reversal') or [])}"
+                f"（候选 {stats.get('reversal_total', 0)}）\n"
+            )
+        lines.extend(format_monitor_list_sections(payload))
     else:
-        lines.append("没有股票符合所选条件。\n")
+        matches = sort_matches_by_potential(matches)
+        if matches:
+            lines.append(f"## 匹配结果（{len(matches)}）\n")
+            lines.extend(format_match_result_table_lines(matches))
+            lines.append("")
+            lines.append("### 技术指标与形态\n")
+            for m in matches:
+                lines.extend(format_match_technical_lines(m))
+                lines.append("")
+            lines.append("")
+        else:
+            lines.append("没有股票符合所选条件。\n")
 
     if no_price:
         lines.append(f"### 无行情数据的代码（{len(no_price)}）\n")

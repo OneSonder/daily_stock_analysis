@@ -58,3 +58,5 @@ def test_hk_stocks_workflow_is_manual_only_and_has_no_llm_or_tushare_secrets():
     assert "DeepSeek" not in raw
     assert "Kimi" not in raw
     assert "Gemini" not in raw
+    assert "default: '1y'" in raw
+    assert "HK_SCAN_MONITOR" in raw

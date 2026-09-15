@@ -201,9 +201,13 @@ def test_format_scan_report_includes_three_etnet_sections_not_losers():
     assert "匹配结果" in text or "没有股票符合所选条件" in text
 
 
+@patch("src.services.daily_monitor.fetch_hsi_index_regime")
 @patch("src.services.etnet_top_movers.fetch_etnet_top_boards")
 @patch("src.services.hsi_scanner.scan_stocks")
-def test_scan_hsi_merges_etnet_when_enabled(mock_scan_stocks, mock_fetch, monkeypatch):
+def test_scan_hsi_merges_etnet_when_enabled(
+    mock_scan_stocks, mock_fetch, mock_index, monkeypatch
+):
+    mock_index.return_value = {"status": "empty", "message": "skip"}
     monkeypatch.setenv("HSI_ETNET_TOP_ENABLED", "true")
     monkeypatch.setenv("HSI_ETNET_TOP_SUBTYPES", "turnover,volume,up")
     mock_fetch.return_value = {
@@ -218,6 +222,7 @@ def test_scan_hsi_merges_etnet_when_enabled(mock_scan_stocks, mock_fetch, monkey
     }
     mock_scan_stocks.return_value = {
         "matches": [],
+        "results": [],
         "no_price": [],
         "stats": {"tickers": 1},
         "skipped": False,
@@ -236,11 +241,44 @@ def test_scan_hsi_merges_etnet_when_enabled(mock_scan_stocks, mock_fetch, monkey
     assert "turnover" in result["etnet_top"]["boards"]
 
 
+@patch("src.services.daily_monitor.fetch_hsi_index_regime")
 @patch("src.services.hsi_scanner.scan_stocks")
-def test_scan_hsi_skips_etnet_when_disabled(mock_scan_stocks, monkeypatch):
+def test_scan_hsi_legacy_keeps_condition_matches_when_monitor_off(
+    mock_scan_stocks, mock_index, monkeypatch
+):
+    mock_index.return_value = {"status": "empty"}
+    monkeypatch.setenv("HSI_SCAN_MONITOR", "false")
+    monkeypatch.setenv("HSI_ETNET_TOP_ENABLED", "false")
+    mock_scan_stocks.return_value = {
+        "matches": [{"code": "0700.HK", "s1_breakout": True, "potential_score": 80}],
+        "results": [
+            {
+                "code": "0700.HK",
+                "status": "ok",
+                "s1_breakout": True,
+                "s1_recent_close_breakout": False,
+            }
+        ],
+        "no_price": [],
+        "stats": {"tickers": 1},
+        "skipped": False,
+        "conditions": ["s1_breakout"],
+    }
+    from src.services.hsi_scanner import scan_hsi
+
+    result = scan_hsi(check_trading_day=False)
+    assert result.get("monitor") is not True
+    assert [m["code"] for m in result["matches"]] == ["0700.HK"]
+
+
+@patch("src.services.daily_monitor.fetch_hsi_index_regime")
+@patch("src.services.hsi_scanner.scan_stocks")
+def test_scan_hsi_skips_etnet_when_disabled(mock_scan_stocks, mock_index, monkeypatch):
+    mock_index.return_value = {"status": "empty", "message": "skip"}
     monkeypatch.setenv("HSI_ETNET_TOP_ENABLED", "false")
     mock_scan_stocks.return_value = {
         "matches": [],
+        "results": [],
         "no_price": [],
         "stats": {"tickers": 1},
         "skipped": False,

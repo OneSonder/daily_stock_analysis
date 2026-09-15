@@ -347,6 +347,51 @@ def test_compute_signals_full_includes_volume_and_potential_reasons():
     assert out.get("potential_tier") in {"A", "B", "C", "D"}
 
 
+def test_format_scan_report_monitor_two_lists():
+    payload = {
+        "monitor": True,
+        "uprising": [
+            {
+                "code": "0700.HK",
+                "name": "腾讯",
+                "close": 400,
+                "url": "",
+                "monitor_event": "S2 Close 今日首破",
+                "s1_entry_allowed": True,
+                "turtle_trend_ok": True,
+                "close_vs_ma100": True,
+                "breakout_extension_n": 0.4,
+                "volume_ratio": 1.5,
+                "avg_turnover_20": 12_000_000,
+                "atr_pct": 1.3,
+                "s1_recent_close_timing": "today",
+                "s2_recent_close_timing": "today",
+                "s2_recent_close_breakout": True,
+                "n": 5.0,
+                "stop_long_2n": 390.0,
+            }
+        ],
+        "reversal": [],
+        "uprising_suppressed": False,
+        "matches": [{"code": "0700.HK"}],
+        "index_regime": {
+            "status": "ok",
+            "turtle_trend_ok": True,
+            "close_vs_ma100": True,
+            "atr_pct": 1.0,
+            "close": 26000,
+        },
+        "no_price": [],
+        "stats": {"tickers": 1, "total_ms": 1, "uprising_total": 1, "reversal_total": 0},
+        "skipped": False,
+    }
+    text = format_scan_report(payload)
+    assert "## 趋势首破" in text
+    assert "S2 Close 今日首破" in text
+    assert "## 匹配结果" not in text
+    assert "恒生指数: 趋势通过" in text
+
+
 def test_sort_matches_by_potential_and_format_order():
     payload = {
         "matches": [

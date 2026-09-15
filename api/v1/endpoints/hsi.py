@@ -38,10 +38,10 @@ async def hsi_scan(
         description="Match enrich cap when enrich=true: omit/all = all matches; 0 = none; positive = top-N",
     ),
     etnet_top_n: int = Query(
-        10,
+        0,
         ge=0,
         le=100,
-        description="ET Net enrich extras when enrich=true: 0 = none; positive = top-N extras (default 10)",
+        description="ET Net enrich extras when enrich=true: 0 = none; positive = top-N extras (default 0)",
     ),
 ) -> dict:
     try:

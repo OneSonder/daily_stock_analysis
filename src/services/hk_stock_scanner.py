@@ -9,6 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from src.services.daily_monitor import (
+    DEFAULT_HK_MONITOR_LIMIT,
+    apply_monitor_to_scan_payload,
+    format_index_regime_lines,
+    format_monitor_list_sections,
+    resolve_max_extension_n,
+    resolve_monitor_enabled,
+    resolve_monitor_limit,
+)
 from src.services.hsi_holdings import normalize_holding_code
 from src.services.hsi_scanner import (
     format_match_result_table_lines,
@@ -24,10 +33,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 80
 DEFAULT_MAX_WORKERS = 8
 DEFAULT_NEWS_MAX_AGE_DAYS = 2
-DEFAULT_PERIOD = "3mo"
+DEFAULT_PERIOD = "1y"
 DEFAULT_CONDITIONS = "s1_breakout,s2_breakout"
 DEFAULT_MIN_PRICE = 0.1
-DEFAULT_MIN_AVG_TURNOVER = 500_000.0
+DEFAULT_MIN_AVG_TURNOVER = 2_000_000.0
 
 
 class HkUniverseError(RuntimeError):
@@ -76,7 +85,7 @@ def resolve_hk_min_price(min_price: Optional[float] = None) -> float:
 
 
 def resolve_hk_min_avg_turnover(min_avg_turnover: Optional[float] = None) -> float:
-    """Minimum 20-day average turnover for HK matches (0 disables). Default 500000."""
+    """Minimum 20-day average turnover for HK matches (0 disables). Default 2000000."""
     if min_avg_turnover is not None:
         return max(0.0, float(min_avg_turnover))
     return max(0.0, _env_float("HK_SCAN_MIN_AVG_TURNOVER", DEFAULT_MIN_AVG_TURNOVER))
@@ -101,10 +110,15 @@ def resolve_hk_require_volume_confirm(require_volume_confirm: Optional[bool] = N
 
 
 def resolve_hk_require_trend(require_trend: Optional[bool] = None) -> bool:
-    """When true, drop matches that fail turtle_trend_ok. Default true."""
+    """When true, drop matches that fail turtle_trend_ok. Default true (legacy dump only)."""
     if require_trend is not None:
         return bool(require_trend)
     return _env_bool("HK_SCAN_REQUIRE_TREND", True)
+
+
+def resolve_hk_monitor_enabled(monitor: Optional[bool] = None) -> bool:
+    """Daily two-list monitor. Default true; false restores the OR-conditions dump."""
+    return resolve_monitor_enabled("HK_SCAN_MONITOR", default=True, override=monitor)
 
 
 def resolve_hk_require_ma100(require_ma100: Optional[bool] = None) -> bool:
@@ -321,15 +335,43 @@ def fetch_tencent_news_for_matches(
     return out
 
 
+def _hk_news_section(
+    matches: Sequence[Dict[str, Any]],
+    news_map: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    lines: List[str] = ["## 腾讯新闻（仅匹配股）\n"]
+    if not matches:
+        lines.append("无匹配股，未抓取新闻。\n")
+        return lines
+    for m in matches:
+        code = str(m.get("code") or "").strip().upper()
+        name = m.get("name") or code
+        news = news_map.get(code) or {}
+        lines.append(f"### {name} ({code})\n")
+        err = news.get("news_error")
+        text = (news.get("news_text") or "").strip()
+        if err and not text:
+            lines.append(f"- 新闻不可用: {err}")
+        elif text:
+            lines.append(text)
+        else:
+            lines.append("- 未检索到有效新闻")
+        lines.append("")
+    return lines
+
+
 def format_hk_scan_report(
     payload: Dict[str, Any],
     news_by_code: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
-    """Build a no-LLM HK scan report: matches + technicals + Tencent news."""
-    matches = sort_matches_by_potential(payload.get("matches") or [])
+    """Build a no-LLM HK scan report: daily monitor lists or legacy match dump."""
     stats = payload.get("stats") or {}
     news_map = news_by_code or {}
     filtered_n = len(payload.get("filtered_illiquid") or [])
+    monitor = bool(payload.get("monitor"))
+    matches = list(payload.get("matches") or [])
+    if not monitor:
+        matches = sort_matches_by_potential(matches)
 
     if payload.get("skipped"):
         skip_reason = payload.get("skip_reason") or "今日休市"
@@ -349,20 +391,38 @@ def format_hk_scan_report(
         "",
         f"- 扫描池: {stats.get('tickers', '?')} 只",
         f"- 股票池来源: {payload.get('universe_source') or 'resources/universes/hk_all_stocks.json'}",
-        f"- 匹配条件: {', '.join(payload.get('conditions') or []) or '暂无'}",
-        f"- 匹配数: {len(matches)}（按潜力分降序）",
-        f"- 流动性过滤: {filtered_n}",
-        f"- 无行情: {len(payload.get('no_price') or [])}",
-        f"- 缓存命中: {stats.get('cache_hits', 0)}",
-        f"- 批量下载: {stats.get('batch_downloaded', 0)}",
-        (
-            f"- 批量失败未回退: "
-            f"{stats.get('unavailable_without_fallback', 0)}"
-        ),
-        "",
     ]
+    if monitor:
+        lines.append("- 模式: 每日监控（趋势首破 / 止跌转折）")
+        lines.append(
+            f"- 趋势首破: {len(payload.get('uprising') or [])}"
+            f"（候选 {stats.get('uprising_total', 0)}）"
+        )
+        lines.append(
+            f"- 止跌转折: {len(payload.get('reversal') or [])}"
+            f"（候选 {stats.get('reversal_total', 0)}）"
+        )
+    else:
+        lines.append(f"- 匹配条件: {', '.join(payload.get('conditions') or []) or '暂无'}")
+        lines.append(f"- 匹配数: {len(matches)}（按潜力分降序）")
+    lines.extend(
+        [
+            f"- 流动性过滤: {filtered_n}",
+            f"- 无行情: {len(payload.get('no_price') or [])}",
+            f"- 缓存命中: {stats.get('cache_hits', 0)}",
+            f"- 批量下载: {stats.get('batch_downloaded', 0)}",
+            (
+                f"- 批量失败未回退: "
+                f"{stats.get('unavailable_without_fallback', 0)}"
+            ),
+            "",
+        ]
+    )
 
-    if matches:
+    if monitor:
+        lines.extend(format_index_regime_lines(payload.get("index_regime")))
+        lines.extend(format_monitor_list_sections(payload))
+    elif matches:
         lines.append(f"## 匹配结果（{len(matches)}）\n")
         lines.extend(format_match_result_table_lines(matches))
         lines.append("")
@@ -373,25 +433,7 @@ def format_hk_scan_report(
     else:
         lines.append("没有股票符合所选条件。\n")
 
-    lines.append("## 腾讯新闻（仅匹配股）\n")
-    if not matches:
-        lines.append("无匹配股，未抓取新闻。\n")
-    else:
-        for m in matches:
-            code = str(m.get("code") or "").strip().upper()
-            name = m.get("name") or code
-            news = news_map.get(code) or {}
-            lines.append(f"### {name} ({code})\n")
-            err = news.get("news_error")
-            text = (news.get("news_text") or "").strip()
-            if err and not text:
-                lines.append(f"- 新闻不可用: {err}")
-            elif text:
-                lines.append(text)
-            else:
-                lines.append("- 未检索到有效新闻")
-            lines.append("")
-
+    lines.extend(_hk_news_section(matches, news_map))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -424,14 +466,19 @@ def run_hk_stocks_scan(
     require_volume_confirm: Optional[bool] = None,
     require_trend: Optional[bool] = None,
     require_ma100: Optional[bool] = None,
+    monitor: Optional[bool] = None,
+    monitor_limit: Optional[int] = None,
+    max_extension_n: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Scan all listed HK stocks with Turtle signals + match-only Tencent news.
 
     Universe defaults to ``resources/universes/hk_all_stocks.json``.
     No LLM / AI analyzers are instantiated on this path.
+    Default is daily-monitor mode (two short lists). Set ``monitor=False``
+    to restore the OR-conditions dump.
     """
     env_cfg = get_scan_config_from_env()
-    resolved_period = period or os.getenv("HK_SCAN_PERIOD") or env_cfg.get("period") or DEFAULT_PERIOD
+    resolved_period = period or os.getenv("HK_SCAN_PERIOD") or DEFAULT_PERIOD
     resolved_conditions = (
         conditions
         or os.getenv("HK_SCAN_CONDITIONS")
@@ -448,9 +495,24 @@ def run_hk_stocks_scan(
     resolved_universe_path = resolve_hk_universe_path(universe_path)
     resolved_min_price = resolve_hk_min_price(min_price)
     resolved_min_turnover = resolve_hk_min_avg_turnover(min_avg_turnover)
-    resolved_require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
-    resolved_require_trend = resolve_hk_require_trend(require_trend)
-    resolved_require_ma100 = resolve_hk_require_ma100(require_ma100)
+    resolved_monitor = resolve_hk_monitor_enabled(monitor)
+    resolved_limit = resolve_monitor_limit(
+        "HK_SCAN_MONITOR_LIMIT",
+        DEFAULT_HK_MONITOR_LIMIT,
+        override=monitor_limit,
+    )
+    resolved_extension = resolve_max_extension_n(
+        "HK_SCAN_MAX_EXTENSION_N",
+        override=max_extension_n,
+    )
+    if resolved_monitor:
+        resolved_require_vol = False
+        resolved_require_trend = False
+        resolved_require_ma100 = False
+    else:
+        resolved_require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
+        resolved_require_trend = resolve_hk_require_trend(require_trend)
+        resolved_require_ma100 = resolve_hk_require_ma100(require_ma100)
 
     if stocks is not None:
         universe = list(stocks)
@@ -473,15 +535,18 @@ def run_hk_stocks_scan(
     payload["universe_size"] = len(universe)
 
     if not payload.get("skipped"):
+        if resolved_monitor:
+            source_rows = payload.get("results") or payload.get("matches") or []
+        else:
+            source_rows = payload.get("matches") or []
         kept, dropped = apply_hk_liquidity_gates(
-            payload.get("matches") or [],
+            source_rows,
             min_price=resolved_min_price,
             min_avg_turnover=resolved_min_turnover,
             require_volume_confirm=resolved_require_vol,
             require_trend=resolved_require_trend,
             require_ma100=resolved_require_ma100,
         )
-        payload["matches"] = sort_matches_by_potential(kept)
         payload["filtered_illiquid"] = dropped
         stats = dict(payload.get("stats") or {})
         stats["liquidity_filtered"] = len(dropped)
@@ -490,7 +555,19 @@ def run_hk_stocks_scan(
         stats["require_volume_confirm"] = resolved_require_vol
         stats["require_trend"] = resolved_require_trend
         stats["require_ma100"] = resolved_require_ma100
+        stats["monitor"] = resolved_monitor
         payload["stats"] = stats
+        if resolved_monitor:
+            apply_monitor_to_scan_payload(
+                payload,
+                period=str(resolved_period),
+                limit=resolved_limit,
+                max_extension_n=resolved_extension,
+                rows=kept,
+            )
+        else:
+            payload["monitor"] = False
+            payload["matches"] = sort_matches_by_potential(kept)
 
     news_items: List[Dict[str, Any]] = []
     if not payload.get("skipped"):
@@ -526,4 +603,5 @@ def run_hk_stocks_scan(
         "require_volume_confirm": resolved_require_vol,
         "require_trend": resolved_require_trend,
         "require_ma100": resolved_require_ma100,
+        "monitor": resolved_monitor,
     }

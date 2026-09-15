@@ -96,8 +96,84 @@ def test_fetch_tencent_news_for_matches_only_and_soft_fails():
     assert rows[1]["news_text"] == ""
 
 
-def test_format_hk_scan_report_keeps_sections_and_omits_ai():
+def test_format_hk_scan_report_monitor_lists_and_omits_ai():
     payload = {
+        "monitor": True,
+        "uprising": [
+            {
+                "code": "0700.HK",
+                "name": "腾讯",
+                "close": 400,
+                "url": "https://finance.yahoo.com/quote/0700.HK",
+                "s1_entry_allowed": True,
+                "turtle_trend_ok": True,
+                "close_vs_ma100": True,
+                "breakout_extension_n": 0.4,
+                "volume_ratio": 1.4,
+                "avg_turnover_20": 8_000_000,
+                "atr_pct": 1.2,
+                "s1_recent_close_timing": "today",
+                "s2_recent_close_timing": "today",
+                "s2_recent_close_breakout": True,
+                "monitor_event": "S2 Close 今日首破",
+                "n": 5.0,
+                "stop_long_2n": 390.0,
+            }
+        ],
+        "reversal": [],
+        "uprising_suppressed": False,
+        "matches": [{"code": "0700.HK", "name": "腾讯"}],
+        "index_regime": {
+            "status": "ok",
+            "turtle_trend_ok": True,
+            "close_vs_ma100": True,
+            "atr_pct": 1.1,
+            "close": 26000,
+        },
+        "no_price": [{"code": "0001.HK", "name": "长和", "message": "empty"}],
+        "stats": {
+            "tickers": 2,
+            "total_ms": 12,
+            "cache_hits": 0,
+            "batch_downloaded": 1,
+            "unavailable_without_fallback": 1,
+            "uprising_total": 1,
+            "reversal_total": 0,
+            "monitor_limit": 15,
+        },
+        "universe_source": "resources/universes/hk_all_stocks.json",
+        "skipped": False,
+    }
+    news = {
+        "0700.HK": {
+            "code": "0700.HK",
+            "news_text": "- 腾讯营收领先 [2099-01-01]",
+            "news_error": None,
+        }
+    }
+    text = format_hk_scan_report(payload, news_by_code=news)
+    assert "## 趋势首破" in text
+    assert "## 止跌转折" in text
+    assert "S2 Close 今日首破" in text
+    assert "| 档 |" not in text
+    assert "按潜力分降序" not in text
+    assert "恒生指数: 趋势通过" in text
+    assert "resources/universes/hk_all_stocks.json" in text
+    assert "## 腾讯新闻（仅匹配股）" in text
+    assert "腾讯营收领先" in text
+    assert "DeepSeek" not in text
+    assert "Kimi" not in text
+    assert "Gemini" not in text
+    assert "LLM" not in text
+    assert "Tushare" not in text
+    assert "持仓止损参考" not in text
+    assert "经济通" not in text
+    assert "无行情数据的代码" not in text
+
+
+def test_format_hk_scan_report_legacy_dump_when_monitor_off():
+    payload = {
+        "monitor": False,
         "matches": [
             {
                 "code": "0700.HK",
@@ -106,8 +182,6 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
                 "url": "https://finance.yahoo.com/quote/0700.HK",
                 "s1_breakout": True,
                 "s2_breakout": False,
-                "close_vs_entry": True,
-                "close_vs_s2_entry": False,
                 "n": 5.0,
                 "stop_long_2n": 390.0,
                 "breakout_extension_n": 1.2,
@@ -133,50 +207,20 @@ def test_format_hk_scan_report_keeps_sections_and_omits_ai():
                 "kline_patterns": [],
             }
         ],
-        "no_price": [{"code": "0001.HK", "name": "长和", "message": "empty"}],
-        "stats": {
-            "tickers": 2,
-            "total_ms": 12,
-            "cache_hits": 0,
-            "batch_downloaded": 1,
-            "unavailable_without_fallback": 1,
-        },
-        "conditions": ["s1_breakout", "s2_breakout"],
+        "no_price": [],
+        "stats": {"tickers": 1, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 1},
+        "conditions": ["s1_breakout"],
         "universe_source": "resources/universes/hk_all_stocks.json",
         "skipped": False,
     }
-    news = {
-        "0700.HK": {
-            "code": "0700.HK",
-            "news_text": "- 腾讯营收领先 [2099-01-01]",
-            "news_error": None,
-        }
-    }
-    text = format_hk_scan_report(payload, news_by_code=news)
+    text = format_hk_scan_report(payload, news_by_code={})
     assert "## 匹配结果（1）" in text
     assert "### 技术指标与形态" in text
-    assert "海龟: N=5.0" in text
-    assert "| S1近H | S2近H | S1近C | S2近C |" in text
-    assert "| MA100 | 延伸N | 量比 | 均额 | ATR% |" in text
-    assert "| A | 81 | 是 | 通过 | 上 | 1.2 | 1.4 | 800万 | 1.2% |" in text
-    assert "| 今日 | 前一交易日 | 无 | 无 |" in text
-    assert "近期突破: S1 High=今日 / Close=无 | S2 High=前一交易日 / Close=无" in text
-    assert "潜力: A 81" in text
-    assert "流动性过滤: 0" in text
     assert "按潜力分降序" in text
-    assert "resources/universes/hk_all_stocks.json" in text
-    assert "## 腾讯新闻（仅匹配股）" in text
-    assert "腾讯营收领先" in text
-    assert "DeepSeek" not in text
-    assert "Kimi" not in text
-    assert "Gemini" not in text
-    assert "LLM" not in text
-    assert "Tushare" not in text
-    assert "持仓止损参考" not in text
-    assert "经济通" not in text
-    assert "无行情数据的代码" not in text
+    assert "| A | 81 | 是 | 通过 | 上 | 1.2 | 1.4 | 800万 | 1.2% |" in text
 
 
+@patch("src.services.daily_monitor.fetch_hsi_index_regime")
 @patch("src.services.hk_stock_scanner.fetch_tencent_news_for_matches")
 @patch("src.services.hk_stock_scanner.scan_stocks")
 @patch("src.services.hk_stock_scanner.load_hk_stocks_universe")
@@ -184,12 +228,37 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
     mock_universe,
     mock_scan,
     mock_news,
+    mock_index,
     tmp_path: Path,
 ):
+    mock_index.return_value = {
+        "status": "ok",
+        "turtle_trend_ok": True,
+        "close_vs_ma100": True,
+        "atr_pct": 1.1,
+        "close": 26000,
+    }
     mock_universe.return_value = [{"code": "0700.HK", "name": "腾讯"}]
     mock_scan.return_value = {
         "matches": [{"code": "0700.HK", "name": "腾讯", "s1_breakout": True, "turtle_trend_ok": True}],
-        "results": [{"code": "0700.HK", "status": "ok"}],
+        "results": [
+            {
+                "code": "0700.HK",
+                "name": "腾讯",
+                "status": "ok",
+                "close": 400,
+                "avg_turnover_20": 8_000_000,
+                "s2_recent_close_breakout": True,
+                "s1_recent_close_breakout": True,
+                "s1_entry_allowed": True,
+                "turtle_trend_ok": True,
+                "volume_confirm": True,
+                "breakout_extension_n": 0.3,
+                "s1_exit": False,
+                "s2_exit": False,
+                "close_vs_ma100": True,
+            }
+        ],
         "no_price": [],
         "stats": {"tickers": 1, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 1},
         "skipped": False,
@@ -200,7 +269,7 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
     ]
 
     result = run_hk_stocks_scan(
-        period="3mo",
+        period="1y",
         conditions="s1_breakout",
         max_workers=4,
         batch_size=50,
@@ -220,8 +289,10 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
     assert "hk_all_stocks.json" in result["payload"]["universe_source"].replace("\\", "/")
     assert result["report_path"]
     assert Path(result["report_path"]).exists()
-    assert "匹配结果" in result["report_text"]
+    assert "趋势首破" in result["report_text"]
     assert "DeepSeek" not in result["report_text"]
+    assert result["monitor"] is True
+    assert [m["code"] for m in result["payload"]["uprising"]] == ["0700.HK"]
 
 
 def test_apply_hk_liquidity_gates_drops_penny_and_thin_turnover():
@@ -249,10 +320,103 @@ def test_apply_hk_liquidity_gates_drops_penny_and_thin_turnover():
     assert "BELOW.HK" in reasons
 
 
+@patch("src.services.daily_monitor.fetch_hsi_index_regime")
 @patch("src.services.hk_stock_scanner.fetch_tencent_news_for_matches")
 @patch("src.services.hk_stock_scanner.scan_stocks")
 @patch("src.services.hk_stock_scanner.load_hk_stocks_universe")
-def test_run_hk_stocks_scan_filters_then_ranks_before_news(
+def test_run_hk_stocks_scan_monitor_filters_then_classifies(
+    mock_universe,
+    mock_scan,
+    mock_news,
+    mock_index,
+    tmp_path: Path,
+):
+    mock_index.return_value = {
+        "status": "ok",
+        "turtle_trend_ok": True,
+        "close_vs_ma100": True,
+        "atr_pct": 1.1,
+        "close": 26000,
+    }
+    mock_universe.return_value = [{"code": "0700.HK", "name": "腾讯"}]
+    uprising = {
+        "code": "0700.HK",
+        "name": "腾讯",
+        "status": "ok",
+        "close": 400.0,
+        "avg_turnover_20": 9_000_000,
+        "s2_recent_close_breakout": True,
+        "s1_recent_close_breakout": True,
+        "s1_entry_allowed": True,
+        "turtle_trend_ok": True,
+        "volume_confirm": True,
+        "breakout_extension_n": 0.4,
+        "s1_exit": False,
+        "s2_exit": False,
+        "close_vs_ma100": True,
+        "potential_score": 70,
+    }
+    reversal = {
+        "code": "9988.HK",
+        "name": "阿里",
+        "status": "ok",
+        "close": 90.0,
+        "avg_turnover_20": 7_000_000,
+        "s1_recent_close_breakout": True,
+        "s2_recent_close_breakout": False,
+        "s1_entry_allowed": True,
+        "turtle_trend_ok": False,
+        "volume_confirm": True,
+        "breakout_extension_n": 0.2,
+        "s1_exit": False,
+        "s2_exit": False,
+        "close_vs_ma100": False,
+        "potential_score": 88,
+    }
+    thin = {
+        "code": "THIN.HK",
+        "name": "薄",
+        "status": "ok",
+        "close": 10.0,
+        "avg_turnover_20": 100.0,
+        "s2_recent_close_breakout": True,
+        "s1_entry_allowed": True,
+        "turtle_trend_ok": True,
+        "volume_confirm": True,
+        "breakout_extension_n": 0.1,
+        "s1_exit": False,
+        "s2_exit": False,
+        "close_vs_ma100": True,
+        "potential_score": 99,
+    }
+    mock_scan.return_value = {
+        "matches": [thin, uprising, reversal],
+        "results": [thin, uprising, reversal],
+        "no_price": [],
+        "stats": {"tickers": 3, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 3},
+        "skipped": False,
+        "conditions": ["s1_breakout"],
+    }
+    mock_news.return_value = []
+
+    result = run_hk_stocks_scan(
+        check_trading_day=False,
+        reports_dir=tmp_path,
+        save_report=False,
+        min_price=0.1,
+        min_avg_turnover=500_000,
+    )
+    assert [m["code"] for m in result["payload"]["uprising"]] == ["0700.HK"]
+    assert [m["code"] for m in result["payload"]["reversal"]] == ["9988.HK"]
+    assert result["payload"]["stats"]["liquidity_filtered"] == 1
+    news_matches = mock_news.call_args.args[0]
+    assert [m["code"] for m in news_matches] == ["0700.HK", "9988.HK"]
+
+
+@patch("src.services.hk_stock_scanner.fetch_tencent_news_for_matches")
+@patch("src.services.hk_stock_scanner.scan_stocks")
+@patch("src.services.hk_stock_scanner.load_hk_stocks_universe")
+def test_run_hk_stocks_scan_legacy_filters_then_ranks_before_news(
     mock_universe,
     mock_scan,
     mock_news,
@@ -315,9 +479,11 @@ def test_run_hk_stocks_scan_filters_then_ranks_before_news(
         require_volume_confirm=False,
         require_trend=True,
         require_ma100=False,
+        monitor=False,
     )
     codes = [m["code"] for m in result["payload"]["matches"]]
     assert codes == ["9988.HK", "0700.HK"]
     assert result["payload"]["stats"]["liquidity_filtered"] == 2
     news_matches = mock_news.call_args.args[0]
     assert [m["code"] for m in news_matches] == ["9988.HK", "0700.HK"]
+    assert "匹配结果" in result["report_text"]
