@@ -45,7 +45,9 @@ This is the entry point for project documentation. The README covers the project
 | [Real-Time Alert Center](alerts.md) <sub><sub>![P4 Badge](https://img.shields.io/badge/P4-yellow?style=flat)</sub></sub> (Chinese-only) | EventMonitor baseline, Web rule management, notification attempts, cooldown state, and phase boundaries |
 | [Analysis Context Pack Contract And Runtime Consumption](analysis-context-pack.md) <sub><sub>![P3 Badge](https://img.shields.io/badge/P3-yellow?style=flat)</sub></sub> (Chinese-only) | AnalysisContextPack first-scope boundaries, field quality states, P1/P2 internal contracts, P3 prompt-summary consumption, and source anchors |
 | [Image Extraction Prompt](image-extract-prompt.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Prompt and boundaries for extracting stock information from images |
-| [HSI Daily Monitor Replay](hsi-monitor-sim.md) (Chinese-only) | Replay uprising/reversal lists on current HSI members; E-ratio and 2N paper trades (research, not a forecast) |
+| [HSI Daily Monitor Replay](hsi-monitor-sim.md) (Chinese runbook) | Replay uprising/reversal lists; includes clone-`mine` + cache-copy vs Yahoo download for a second machine |
+| [Daily monitor roadmap](monitor-roadmap.md) | P0–P5 plan: yesterday delta, holdings overlay, Turtle paper book, HK replay; live gates blocked on 5y evidence |
+| [HSI replay engine plan](hsi-monitor-simulator-plan.md) | PIT slice, MAE/MFE/E-ratio, next-open 2N paper book |
 | [OpenClaw Skill Integration](openclaw-skill-integration.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | OpenClaw / Skill external integration notes |
 
 ## Deployment And Packaging

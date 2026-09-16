@@ -132,7 +132,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | Prefer multi-source data fetchers; default `false` to keep yfinance behavior | Optional |
 | `REPORT_QUALIFIED_SCAN_CACHE_ENABLED` | Enable the qualified-scan same-day OHLCV disk cache (default `true`); repeated runs that day avoid another Yahoo Finance request | Optional |
 | `REPORT_QUALIFIED_SCAN_CACHE_DIR` | Qualified-scan OHLCV cache directory (default `data/cache/ohlcv`, relative to project root) | Optional |
-| `MONITOR_SIM_PERIOD` | HSI daily-monitor research replay Yahoo window (default `5y`); see [HSI daily monitor replay](hsi-monitor-sim.md) (Chinese) | Optional |
+| `MONITOR_SIM_PERIOD` | HSI daily-monitor research replay Yahoo window (default `5y`); see [HSI daily monitor replay](hsi-monitor-sim.md) (Chinese runbook), [roadmap](monitor-roadmap.md) | Optional |
 | `MONITOR_SIM_HORIZON` | Replay forward bars (default `20`) | Optional |
 | `MONITOR_SIM_WARMUP` | Replay warmup bars (default `100`) | Optional |
 | `MONITOR_SIM_COST_BPS` | Paper round-trip cost in basis points (default `20`) | Optional |

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [文档] 入库每日监控路线图与回放引擎设计，并补充换机运行/对照步骤（缓存与报告仍 gitignore）。
 - [新功能] HSI/全港股每日监控增加昨日对照（新/仍在/离开/换桶）与跟丢标签；持仓对照（距2N，无额外 LLM）；模拟器支持 `--book turtle` 与 `--universe hk`。
 - [新功能] 新增 HSI 每日监控研究回放：`python scripts/simulate_hsi_monitor.py`（默认 5y 本地 Yahoo 缓存，MAE/MFE/E-ratio 对照随机与次日开盘 2N 纸上交易；非预测、无 LLM）。
 - [改进] HSI / 全港股扫描默认改为每日监控两名单（趋势首破 / 止跌转折）：Close 首破 + 放量 + MA100/趋势分桶，默认 `period=1y`，恒指趋势未过则不列趋势首破；`potential_score` 只作并列次序。

@@ -81,7 +81,7 @@
 
 “首次”指该交易日相对其自身前一根 K 线从「未上穿」变为「上穿」；已在通道上方继续运行的不算。
 
-**不包含**：持仓止损表、经济通榜单、LLM 点评 / 决策仪表盘、全市场无行情明细列表、相对昨日的 New/Still/Failed。
+**不包含**：持仓止损表（HSI 扫描那套 sell/keep/buy 主表）、经济通榜单、LLM 点评 / 决策仪表盘、全市场无行情明细列表。昨日对照与跟丢见上文「对照」。研究回放（非 Actions）见 [HSI 每日监控回放](hsi-monitor-sim.md) 与 [路线图](monitor-roadmap.md)。
 
 ## 与 HSI Signal Scan 的关系
 
@@ -93,7 +93,7 @@
 | 新闻 | 匹配增强路径（可含搜索兜底） | 仅腾讯 ifzq，且仅名单内 |
 | 定时 | 已禁用（可手动） | 仅 `workflow_dispatch` |
 
-两者独立；股票池与 `HK_ALL` / 技术筛选共用同一快照文件。HSI 可用 `HSI_SCAN_MONITOR=false` 恢复旧 OR dump。
+两者独立；股票池与 `HK_ALL` / 技术筛选共用同一快照文件。HSI 可用 `HSI_SCAN_MONITOR=false` 恢复旧 OR dump。本地研究回放可用 `python scripts/simulate_hsi_monitor.py --universe hk --codes ...`，不要接到本 workflow。
 
 ## 局限与风险
 

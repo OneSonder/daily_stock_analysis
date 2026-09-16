@@ -5,7 +5,63 @@
 **不是预测，也不会改线上扫描规则。** 不含 LLM。不要接到 GitHub Actions（Yahoo 下载 + CPU 都不适合 CI）。
 
 实现：[src/services/monitor_simulator.py](../src/services/monitor_simulator.py)  
-入口：`python scripts/simulate_hsi_monitor.py`
+入口：`python scripts/simulate_hsi_monitor.py`  
+路线图：[monitor-roadmap.md](monitor-roadmap.md)  
+引擎设计：[hsi-monitor-simulator-plan.md](hsi-monitor-simulator-plan.md)
+
+## 换一台机器跑 / 对照
+
+代码、计划、测试都在 GitHub 分支 **`mine`**。OHLCV pickle 和回放报告 **不入库**（`.gitignore` 的 `/data/`、`reports/`）。另一台机器不能只靠 `git pull` 拿到 2y/5y K 线。
+
+**GitHub 有什么**
+
+| 有 | 没有（需本机生成或拷贝） |
+| --- | --- |
+| 回放脚本、分类器、海龟纸上账、文档与计划 | `data/cache/ohlcv/*.pkl` |
+| `tests/test_monitor_simulator.py` 等离线测试 | `reports/hsi_monitor_sim_*.md/.csv` |
+| 线上扫描 workflow（**不含** 5y 回放） | `data/monitor_state/` 昨日对照快照 |
+
+**新机器步骤**
+
+```text
+git clone https://github.com/OneSonder/daily_stock_analysis.git
+cd daily_stock_analysis
+git checkout mine
+pip install -r requirements.txt
+python -m pytest tests/test_monitor_simulator.py tests/test_turtle_paper_book.py tests/test_daily_monitor.py -q
+```
+
+然后二选一准备 K 线：
+
+1. **从上一台拷贝缓存**（快、不打 Yahoo）：把整个 `data/cache/ohlcv/` 拷到新仓库同路径，再 `--no-network`。文件名是 `{CODE}_{period}_{日期}.pkl`；`2y` 不能当 `5y` 用，缺 5y 文件时必须再下载。
+2. **本机下载**：不要加 `--no-network`。先 2y 冒烟，再 5y。
+
+```text
+python scripts/simulate_hsi_monitor.py --period 2y --progress-every 20 --verbose
+python scripts/simulate_hsi_monitor.py --period 5y --progress-every 20 --verbose
+```
+
+PowerShell 把日志落到文件里方便对照：
+
+```text
+python scripts/simulate_hsi_monitor.py --period 2y --progress-every 20 --verbose 2>&1 | Tee-Object -FilePath reports\sim_2y.log
+```
+
+日志里应出现 `Replay starting: days=...`，然后每隔 N 个回放日一条 `Replay progress a/b (YYYY-MM-DD) alerts=... trades=...`。全成分 2y 大约十几到几十分钟 CPU；5y 更长。不要接到 GitHub Actions。
+
+**对照时看哪些文件**
+
+| 目的 | 打开 |
+| --- | --- |
+| 规则为何这样 | [monitor-roadmap.md](monitor-roadmap.md)、[hsi-monitor-simulator-plan.md](hsi-monitor-simulator-plan.md) |
+| 逐日 PIT 切片 | [`src/services/monitor_simulator.py`](../src/services/monitor_simulator.py) `history_through` → `evaluate_ticker_from_history` → `classify_daily_monitor` |
+| 线上准入（回放复用） | [`src/services/daily_monitor.py`](../src/services/daily_monitor.py) |
+| 信号 / Volume | [`src/services/hsi_scanner.py`](../src/services/hsi_scanner.py) `evaluate_ticker_from_history` |
+| 缓存文件名 | [`src/services/ohlcv_cache.py`](../src/services/ohlcv_cache.py) |
+| 海龟纸上账 | [`src/services/turtle_paper_book.py`](../src/services/turtle_paper_book.py) |
+| 产物 | `reports/hsi_monitor_sim_*.md` 里「警报质量」E-ratio vs 随机对照；CSV 是逐条警报/成交 |
+
+P0 完成前 **不要改线上闸门**（延伸 N、放量、MA100）。把 md/csv 和 `sim_*.log` 自行备份或拷走；不要 `git add reports/` 或 `data/cache/`。
 
 ## 怎么跑
 
