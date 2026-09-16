@@ -133,6 +133,14 @@ daily_stock_analysis/
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | 是否优先使用多数据源抓取；默认 `false`，与小程序一致走 yfinance | 可选 |
 | `REPORT_QUALIFIED_SCAN_CACHE_ENABLED` | 是否启用技术筛选 OHLCV 同日磁盘缓存（默认 `true`）；同日重复运行可避免再次请求 Yahoo Finance | 可选 |
 | `REPORT_QUALIFIED_SCAN_CACHE_DIR` | 技术筛选 OHLCV 缓存目录（默认 `data/cache/ohlcv`，相对项目根目录） | 可选 |
+| `MONITOR_SIM_PERIOD` | HSI 每日监控研究回放的 Yahoo 窗口（默认 `5y`）；见 [HSI 每日监控回放](hsi-monitor-sim.md) | 可选 |
+| `MONITOR_SIM_HORIZON` | 回放前瞻交易日数（默认 `20`） | 可选 |
+| `MONITOR_SIM_WARMUP` | 回放预热 K 线数（默认 `100`） | 可选 |
+| `MONITOR_SIM_COST_BPS` | 纸上往返成本基点（默认 `20`） | 可选 |
+| `MONITOR_SIM_SEED` | 随机对照抽样种子（默认 `42`） | 可选 |
+| `MONITOR_SIM_EQUITY` | 海龟纸上本金（默认 `1000000`） | 可选 |
+| `MONITOR_DELTA` | 每日监控昨日对照（默认 `true`） | 可选 |
+| `MONITOR_STATE_DIR` | 对照快照目录（默认 `data/monitor_state`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | 报告中最多展示多少只合格股（默认 `20`） | 可选 |
 | `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | 是否仅在港股交易日执行筛选（默认 `false`） | 可选 |
 | `ANALYSIS_DELAY` | 个股分析和大盘分析之间的延迟（秒），避免API限流，如 `10` | 可选 |

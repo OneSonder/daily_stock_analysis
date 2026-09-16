@@ -44,6 +44,7 @@
 | [实时告警中心](alerts.md) | EventMonitor 基线、Web 规则管理、通知结果、冷却状态和 Phase 边界 |
 | [分析上下文包契约与运行态消费](analysis-context-pack.md) | AnalysisContextPack 首版范围、字段质量状态、P1/P2 内部契约、P3 Prompt 摘要消费和源码锚点 |
 | [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界 |
+| [HSI 每日监控回放](hsi-monitor-sim.md) | 恒指成分上重放趋势首破/止跌转折，E-ratio 与 2N 纸上交易（研究用，非预测） |
 | [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明 |
 
 ## 部署与打包

@@ -564,7 +564,19 @@ def run_hk_stocks_scan(
                 limit=resolved_limit,
                 max_extension_n=resolved_extension,
                 rows=kept,
+                market="hk",
             )
+            from src.services.hsi_holdings import load_holdings_from_env
+            from src.services.hsi_scanner import attach_holdings_to_results
+            from src.services.daily_monitor import apply_holdings_monitor_overlay
+
+            holdings_list = load_holdings_from_env()
+            if holdings_list:
+                payload["holdings"] = attach_holdings_to_results(
+                    holdings_list,
+                    payload.get("results") or kept,
+                )
+                apply_holdings_monitor_overlay(payload)
         else:
             payload["monitor"] = False
             payload["matches"] = sort_matches_by_potential(kept)

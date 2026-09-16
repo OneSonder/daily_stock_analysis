@@ -70,6 +70,14 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore monitor snapshot
+        uses: actions/cache@v4
+        with:
+          path: data/monitor_state
+          key: monitor-state-hk-${{ github.run_id }}
+          restore-keys: |
+            monitor-state-hk-
+
       - name: Run HK stocks Turtle scan
         id: scan
         env:

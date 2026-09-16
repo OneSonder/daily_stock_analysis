@@ -71,6 +71,14 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore monitor snapshot
+        uses: actions/cache@v4
+        with:
+          path: data/monitor_state
+          key: monitor-state-hsi-${{ github.run_id }}
+          restore-keys: |
+            monitor-state-hsi-
+
       - name: Run HSI scan + lite enrichment
         id: scan
         env:

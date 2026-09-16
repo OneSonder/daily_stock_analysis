@@ -1685,6 +1685,8 @@ def evaluate_ticker_from_history(
         signal_columns = ['High', 'Low', 'Close']
         if 'Open' in hist.columns:
             signal_columns.insert(0, 'Open')
+        if 'Volume' in hist.columns:
+            signal_columns.append('Volume')
         sig = compute_signals_full(hist[signal_columns])
     except Exception as e:
         return {
@@ -2034,7 +2036,11 @@ def scan_hsi(
                     DEFAULT_HSI_MONITOR_LIMIT,
                 ),
                 max_extension_n=resolve_max_extension_n("HSI_SCAN_MAX_EXTENSION_N"),
+                market="hsi",
             )
+            from src.services.daily_monitor import apply_holdings_monitor_overlay
+
+            apply_holdings_monitor_overlay(payload)
     return payload
 
 

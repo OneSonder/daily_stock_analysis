@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] HSI/全港股每日监控增加昨日对照（新/仍在/离开/换桶）与跟丢标签；持仓对照（距2N，无额外 LLM）；模拟器支持 `--book turtle` 与 `--universe hk`。
+- [新功能] 新增 HSI 每日监控研究回放：`python scripts/simulate_hsi_monitor.py`（默认 5y 本地 Yahoo 缓存，MAE/MFE/E-ratio 对照随机与次日开盘 2N 纸上交易；非预测、无 LLM）。
 - [改进] HSI / 全港股扫描默认改为每日监控两名单（趋势首破 / 止跌转折）：Close 首破 + 放量 + MA100/趋势分桶，默认 `period=1y`，恒指趋势未过则不列趋势首破；`potential_score` 只作并列次序。
 - [改进] 全港股监控默认 20 日均额下限改为 200 万港币；HSI 增强默认不再把经济通额外代码送进 LLM（`HSI_ENRICH_ETNET_TOP_N=0`）。
 - [改进] 全港股扫描默认要求 `turtle_trend_ok`；匹配表增加 20 日均额、ATR%、MA100（收盘相对 100 日均线，短窗口显示「不足」）；可选 `HK_SCAN_REQUIRE_MA100`（缺数据不剔除，建议 `period=1y`）。

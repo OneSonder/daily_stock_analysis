@@ -45,6 +45,7 @@ This is the entry point for project documentation. The README covers the project
 | [Real-Time Alert Center](alerts.md) <sub><sub>![P4 Badge](https://img.shields.io/badge/P4-yellow?style=flat)</sub></sub> (Chinese-only) | EventMonitor baseline, Web rule management, notification attempts, cooldown state, and phase boundaries |
 | [Analysis Context Pack Contract And Runtime Consumption](analysis-context-pack.md) <sub><sub>![P3 Badge](https://img.shields.io/badge/P3-yellow?style=flat)</sub></sub> (Chinese-only) | AnalysisContextPack first-scope boundaries, field quality states, P1/P2 internal contracts, P3 prompt-summary consumption, and source anchors |
 | [Image Extraction Prompt](image-extract-prompt.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Prompt and boundaries for extracting stock information from images |
+| [HSI Daily Monitor Replay](hsi-monitor-sim.md) (Chinese-only) | Replay uprising/reversal lists on current HSI members; E-ratio and 2N paper trades (research, not a forecast) |
 | [OpenClaw Skill Integration](openclaw-skill-integration.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | OpenClaw / Skill external integration notes |
 
 ## Deployment And Packaging

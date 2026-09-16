@@ -8,7 +8,7 @@ import os
 import re
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import pandas as pd
 
@@ -31,10 +31,47 @@ def cache_dir() -> Path:
     return path if path.is_absolute() else (_PROJECT_ROOT / path)
 
 
+def _safe_code(code: str) -> str:
+    return _SAFE_KEY_RE.sub("_", code.strip().upper())
+
+
+def _safe_period(period: str) -> str:
+    return _SAFE_KEY_RE.sub("_", period.strip().lower())
+
+
 def _cache_path(code: str, period: str, as_of: date) -> Path:
-    safe_code = _SAFE_KEY_RE.sub("_", code.strip().upper())
-    safe_period = _SAFE_KEY_RE.sub("_", period.strip().lower())
-    return cache_dir() / f"{safe_code}_{safe_period}_{as_of.isoformat()}.pkl"
+    return cache_dir() / f"{_safe_code(code)}_{_safe_period(period)}_{as_of.isoformat()}.pkl"
+
+
+def _read_pickle(path: Path) -> Optional[pd.DataFrame]:
+    try:
+        frame = pd.read_pickle(path)
+    except Exception as exc:
+        logger.warning("Ignoring unreadable OHLCV cache %s: %s", path, exc)
+        return None
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    return frame.copy()
+
+
+def cached_history_paths(code: str, period: str) -> List[Path]:
+    """Return pickle paths for ``code``+``period``, newest date first."""
+    directory = cache_dir()
+    if not directory.is_dir():
+        return []
+    prefix = f"{_safe_code(code)}_{_safe_period(period)}_"
+    found: List[tuple[str, Path]] = []
+    for path in directory.glob(f"{prefix}*.pkl"):
+        if path.name.endswith(".tmp"):
+            continue
+        stamp = path.name[len(prefix):-4]
+        try:
+            date.fromisoformat(stamp)
+        except ValueError:
+            continue
+        found.append((stamp, path))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in found]
 
 
 def load_cached_history(
@@ -49,14 +86,25 @@ def load_cached_history(
     path = _cache_path(code, period, as_of or date.today())
     if not path.is_file():
         return None
-    try:
-        frame = pd.read_pickle(path)
-    except Exception as exc:
-        logger.warning("Ignoring unreadable OHLCV cache %s: %s", path, exc)
+    return _read_pickle(path)
+
+
+def load_latest_cached_history(
+    code: str,
+    period: str,
+) -> Optional[pd.DataFrame]:
+    """Load today's pickle, else the newest dated file for this code+period."""
+    if not cache_enabled():
         return None
-    if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return None
-    return frame.copy()
+    today = load_cached_history(code, period)
+    if today is not None:
+        return today
+    for path in cached_history_paths(code, period):
+        frame = _read_pickle(path)
+        if frame is not None:
+            logger.info("Using latest OHLCV cache %s", path.name)
+            return frame
+    return None
 
 
 def save_cached_history(

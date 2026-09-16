@@ -132,6 +132,14 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_QUALIFIED_SCAN_USE_MULTI_SOURCE` | Prefer multi-source data fetchers; default `false` to keep yfinance behavior | Optional |
 | `REPORT_QUALIFIED_SCAN_CACHE_ENABLED` | Enable the qualified-scan same-day OHLCV disk cache (default `true`); repeated runs that day avoid another Yahoo Finance request | Optional |
 | `REPORT_QUALIFIED_SCAN_CACHE_DIR` | Qualified-scan OHLCV cache directory (default `data/cache/ohlcv`, relative to project root) | Optional |
+| `MONITOR_SIM_PERIOD` | HSI daily-monitor research replay Yahoo window (default `5y`); see [HSI daily monitor replay](hsi-monitor-sim.md) (Chinese) | Optional |
+| `MONITOR_SIM_HORIZON` | Replay forward bars (default `20`) | Optional |
+| `MONITOR_SIM_WARMUP` | Replay warmup bars (default `100`) | Optional |
+| `MONITOR_SIM_COST_BPS` | Paper round-trip cost in basis points (default `20`) | Optional |
+| `MONITOR_SIM_SEED` | Random-control RNG seed (default `42`) | Optional |
+| `MONITOR_SIM_EQUITY` | Turtle paper notional (default `1000000`) | Optional |
+| `MONITOR_DELTA` | Daily-monitor yesterday delta (default `true`) | Optional |
+| `MONITOR_STATE_DIR` | Snapshot directory (default `data/monitor_state`) | Optional |
 | `REPORT_QUALIFIED_SCAN_MAX_RESULTS` | Max matched stocks shown in report (default `20`) | Optional |
 | `REPORT_QUALIFIED_SCAN_CHECK_TRADING_DAY` | Restrict scan to HK trading days only (default `false`) | Optional |
 | `ANALYSIS_DELAY` | Delay between stock analysis and market review (seconds) to avoid API rate limits, e.g., `10` | Optional |

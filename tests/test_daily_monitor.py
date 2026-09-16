@@ -3,11 +3,17 @@
 
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+
 from src.services.daily_monitor import (
+    apply_holdings_monitor_overlay,
+    apply_monitor_delta,
     apply_monitor_to_scan_payload,
     classify_daily_monitor,
     format_index_regime_lines,
     format_monitor_list_sections,
+    is_follow_through_failed,
     is_reversal_row,
     is_uprising_row,
     monitor_event_label,
@@ -224,3 +230,151 @@ def test_suppressed_uprising_line_in_report():
 def test_index_insufficient_banner():
     lines = format_index_regime_lines({"status": "empty", "message": "No data found"})
     assert any("恒指数据不足" in line for line in lines)
+
+
+def test_monitor_delta_new_still_left_and_bucket_switch(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MONITOR_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MONITOR_DELTA", "true")
+    yesterday = {
+        "results": [_row(code="0700.HK", s2_recent_close_breakout=True, date="2026-09-14")],
+        "stats": {},
+        "skipped": False,
+    }
+    apply_monitor_to_scan_payload(
+        yesterday,
+        period="1y",
+        limit=10,
+        fetch_index=False,
+        index_regime={"status": "ok", "turtle_trend_ok": True},
+        market="hsi",
+        as_of=date(2026, 9, 14),
+        persist_state=True,
+    )
+    today = {
+        "results": [
+            _row(code="0700.HK", s2_recent_close_breakout=True, date="2026-09-15"),
+            _row(code="9988.HK", s2_recent_close_breakout=True, date="2026-09-15"),
+        ],
+        "stats": {},
+        "skipped": False,
+    }
+    apply_monitor_to_scan_payload(
+        today,
+        period="1y",
+        limit=10,
+        fetch_index=False,
+        index_regime={"status": "ok", "turtle_trend_ok": True},
+        market="hsi",
+        as_of=date(2026, 9, 15),
+        persist_state=False,
+    )
+    by_code = {row["code"]: row["monitor_delta"] for row in today["uprising"]}
+    assert by_code["0700.HK"] == "仍在"
+    assert by_code["9988.HK"] == "新"
+    assert today["monitor_delta"]["left"] == []
+    text = "\n".join(format_monitor_list_sections(today))
+    assert "对照" in text
+
+
+def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MONITOR_STATE_DIR", str(tmp_path))
+    first = {
+        "results": [
+            _row(
+                code="1810.HK",
+                s1_recent_close_breakout=True,
+                turtle_trend_ok=False,
+                close_vs_ma100=False,
+                s2_recent_close_breakout=False,
+                date="2026-09-14",
+            ),
+            _row(code="0700.HK", s2_recent_close_breakout=True, date="2026-09-14"),
+        ],
+        "stats": {},
+        "skipped": False,
+    }
+    apply_monitor_to_scan_payload(
+        first,
+        period="1y",
+        limit=10,
+        fetch_index=False,
+        index_regime={"status": "ok", "turtle_trend_ok": True},
+        market="hsi",
+        as_of=date(2026, 9, 14),
+        persist_state=True,
+    )
+    still = {
+        "results": [
+            _row(
+                code="1810.HK",
+                s2_recent_close_breakout=True,
+                date="2026-09-15",
+            )
+        ],
+        "stats": {},
+        "skipped": False,
+    }
+    apply_monitor_to_scan_payload(
+        still,
+        period="1y",
+        limit=10,
+        fetch_index=False,
+        index_regime={"status": "ok", "turtle_trend_ok": True},
+        market="hsi",
+        as_of=date(2026, 9, 15),
+        persist_state=False,
+    )
+    assert still["uprising"][0]["monitor_delta"] == "换桶"
+    left_codes = {item["code"] for item in still["monitor_delta"]["left"]}
+    assert "0700.HK" in left_codes
+
+
+def test_follow_through_failed_on_stop_and_lost_channel():
+    yest = {"stop_long_2n": 90.0, "s2_recent_close_breakout": True, "s1_recent_close_breakout": False}
+    assert is_follow_through_failed(yest, {"low": 89.0, "close": 95.0, "close_vs_s2_entry": True}) is True
+    yest_s1 = {"stop_long_2n": 10.0, "s2_recent_close_breakout": False, "s1_recent_close_breakout": True}
+    assert is_follow_through_failed(yest_s1, {"low": 20.0, "close": 21.0, "close_vs_entry": False}) is True
+    assert is_follow_through_failed(yest, {"low": 95.0, "close": 96.0, "close_vs_s2_entry": True}) is False
+
+
+def test_missing_snapshot_is_quiet(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MONITOR_STATE_DIR", str(tmp_path))
+    payload = {
+        "uprising": [_row(s2_recent_close_breakout=True, date="2026-09-15")],
+        "reversal": [],
+        "results": [_row(s2_recent_close_breakout=True, date="2026-09-15")],
+        "skipped": False,
+    }
+    apply_monitor_delta(payload, market="hsi", as_of=date(2026, 9, 15), persist=False)
+    assert payload["monitor_delta"]["available"] is False
+    text = "\n".join(format_monitor_list_sections(payload))
+    assert "无昨日对照" in text
+
+
+def test_holdings_overlay_on_list_and_off_list():
+    payload = {
+        "uprising": [_row(code="0700.HK", s2_recent_close_breakout=True)],
+        "reversal": [],
+    }
+    holdings = [
+        {"code": "0700.HK", "name": "腾讯", "turtle_action": "keep", "distance_to_stop_n": 1.2},
+        {"code": "9988.HK", "name": "阿里", "turtle_action": "sell", "distance_to_stop_n": 0.1},
+    ]
+    apply_holdings_monitor_overlay(payload, holdings)
+    assert payload["uprising"][0]["is_holding"] is True
+    assert payload["uprising"][0]["distance_to_stop_n"] == 1.2
+    by_code = {row["code"]: row["monitor_location"] for row in payload["holdings_overlay"]}
+    assert by_code["0700.HK"] == "趋势首破"
+    assert by_code["9988.HK"] == "未入名单"
+    text = "\n".join(format_monitor_list_sections(payload))
+    assert "## 持仓对照" in text
+    assert "未入名单" in text
+
+
+def test_holdings_overlay_empty_when_no_holdings():
+    payload = {"uprising": [_row(s2_recent_close_breakout=True)], "reversal": []}
+    apply_holdings_monitor_overlay(payload, [])
+    assert payload["holdings_overlay"] == []
+    text = "\n".join(format_monitor_list_sections(payload))
+    assert "## 持仓对照" not in text
+
