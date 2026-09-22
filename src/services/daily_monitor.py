@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import statistics
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -17,6 +18,19 @@ INDEX_NAME = "恒生指数"
 DEFAULT_MAX_EXTENSION_N = 1.0
 DEFAULT_HK_MONITOR_LIMIT = 15
 DEFAULT_HSI_MONITOR_LIMIT = 10
+DELTA_NEW = "new"
+DELTA_STILL = "still"
+DELTA_SWITCHED = "switched"
+DELTA_SECTION_HEADINGS = {
+    DELTA_NEW: "今日新入名单",
+    DELTA_STILL: "昨日已在、今日仍在",
+    DELTA_SWITCHED: "从另一名单换入",
+}
+NO_YESTERDAY_TEXT = "无昨日名单可对照（首次或快照缺失）"
+FOLLOW_THROUGH_LABEL = "未守住昨日信号"
+LEFT_LABEL = "今日离开名单"
+LEFT_SECTION_HEADING = "今日离开名单 / 未守住昨日信号"
+PRIOR_NEW_WINDOW = 5
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -337,6 +351,7 @@ def apply_monitor_to_scan_payload(
         persist=persist_state if persist_state is not None else bool(market),
         enabled=delta_enabled,
     )
+    fill_listed_distance_to_stop(payload)
     return payload
 
 
@@ -354,6 +369,33 @@ def resolve_monitor_delta_enabled(override: Optional[bool] = None) -> bool:
 
 def _code_key(row: Dict[str, Any]) -> str:
     return str(row.get("code") or "").strip().upper()
+
+
+def delta_label(token: Optional[str]) -> str:
+    if not token:
+        return "—"
+    return DELTA_SECTION_HEADINGS.get(str(token), str(token))
+
+
+def listed_distance_to_stop_n(row: Dict[str, Any]) -> Optional[float]:
+    existing = _as_float(row.get("distance_to_stop_n"))
+    if existing is not None:
+        return existing
+    close = _as_float(row.get("close"))
+    stop = _as_float(row.get("stop_long_2n"))
+    n_val = _as_float(row.get("n"))
+    if close is None or stop is None or n_val is None or n_val == 0:
+        return None
+    return round((close - stop) / n_val, 2)
+
+
+def fill_listed_distance_to_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
+    for bucket in ("uprising", "reversal"):
+        for row in payload.get(bucket) or []:
+            dist = listed_distance_to_stop_n(row)
+            if dist is not None:
+                row["distance_to_stop_n"] = dist
+    return payload
 
 
 def _payload_as_of(payload: Dict[str, Any], fallback: Optional[date] = None) -> date:
@@ -426,10 +468,26 @@ def save_monitor_snapshot(snapshot: Dict[str, Any], *, market: str, as_of: date)
     return path
 
 
-def load_previous_monitor_snapshot(market: str, as_of: date) -> Optional[Dict[str, Any]]:
+def _read_monitor_snapshot(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Ignoring unreadable monitor snapshot %s: %s", path, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def list_monitor_snapshots_before(
+    market: str,
+    as_of: date,
+    *,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     directory = monitor_state_dir()
     if not directory.is_dir():
-        return None
+        return []
     found: List[tuple[date, Path]] = []
     prefix = f"{market}_"
     for path in directory.glob(f"{prefix}*.json"):
@@ -440,18 +498,88 @@ def load_previous_monitor_snapshot(market: str, as_of: date) -> Optional[Dict[st
             continue
         if day < as_of:
             found.append((day, path))
-    if not found:
-        return None
     found.sort(key=lambda item: item[0], reverse=True)
-    path = found[0][1]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("Ignoring unreadable monitor snapshot %s: %s", path, exc)
+    out: List[Dict[str, Any]] = []
+    for day, path in found:
+        data = _read_monitor_snapshot(path)
+        if not data:
+            continue
+        data.setdefault("as_of", day.isoformat())
+        out.append(data)
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def load_previous_monitor_snapshot(market: str, as_of: date) -> Optional[Dict[str, Any]]:
+    items = list_monitor_snapshots_before(market, as_of, limit=1)
+    return items[0] if items else None
+
+
+def _snapshot_codes(snapshot: Dict[str, Any]) -> set[str]:
+    return {
+        _code_key(item)
+        for item in (snapshot.get("names") or [])
+        if isinstance(item, dict) and _code_key(item)
+    }
+
+
+def _snapshot_new_count(snapshot: Dict[str, Any], older: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    counts = snapshot.get("counts")
+    if isinstance(counts, dict) and counts.get("new") is not None:
+        try:
+            return int(counts["new"])
+        except (TypeError, ValueError):
+            pass
+    if older is None:
         return None
-    if not isinstance(data, dict):
-        return None
-    return data
+    return len(_snapshot_codes(snapshot) - _snapshot_codes(older))
+
+
+def _median_prior_new(snapshots: Sequence[Dict[str, Any]]) -> tuple[Optional[float], int]:
+    values: List[int] = []
+    snaps = list(snapshots)
+    for index, snap in enumerate(snaps[:PRIOR_NEW_WINDOW]):
+        older = snaps[index + 1] if index + 1 < len(snaps) else None
+        count = _snapshot_new_count(snap, older)
+        if count is not None:
+            values.append(count)
+    if not values:
+        return None, 0
+    return float(statistics.median(values)), len(values)
+
+
+def _still_streak(code: str, bucket: str, snapshots: Sequence[Dict[str, Any]]) -> int:
+    streak = 1
+    for snap in snapshots:
+        names = {
+            _code_key(item): str(item.get("bucket") or "")
+            for item in (snap.get("names") or [])
+            if isinstance(item, dict) and _code_key(item)
+        }
+        if names.get(code) == bucket:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _delta_counts(payload: Dict[str, Any]) -> Dict[str, Any]:
+    counts: Dict[str, Any] = {}
+    for bucket in ("uprising", "reversal"):
+        grouped = {DELTA_NEW: 0, DELTA_STILL: 0, DELTA_SWITCHED: 0}
+        for row in payload.get(bucket) or []:
+            token = row.get("monitor_delta")
+            if token in grouped:
+                grouped[token] += 1
+        counts[bucket] = grouped
+    delta = payload.get("monitor_delta") or {}
+    counts["left"] = len(delta.get("left") or [])
+    counts["follow_through_failed"] = len(delta.get("follow_through_failed") or [])
+    counts["new"] = counts["uprising"][DELTA_NEW] + counts["reversal"][DELTA_NEW]
+    counts["still"] = counts["uprising"][DELTA_STILL] + counts["reversal"][DELTA_STILL]
+    counts["switched"] = counts["uprising"][DELTA_SWITCHED] + counts["reversal"][DELTA_SWITCHED]
+    return counts
 
 
 def is_follow_through_failed(
@@ -484,16 +612,19 @@ def apply_monitor_delta(
     persist: bool = False,
     enabled: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Attach New/Still/Left/换桶 plus follow-through-failed tags."""
+    """Attach new/still/switched plus follow-through-failed tags."""
     if not resolve_monitor_delta_enabled(enabled) or payload.get("skipped"):
         payload["monitor_delta"] = {"available": False, "reason": "disabled"}
+        fill_listed_distance_to_stop(payload)
         return payload
     if not market:
         payload["monitor_delta"] = {"available": False, "reason": "no_market"}
+        fill_listed_distance_to_stop(payload)
         return payload
 
     session = as_of or _payload_as_of(payload)
-    snapshot = load_previous_monitor_snapshot(market, session)
+    priors = list_monitor_snapshots_before(market, session)
+    snapshot = priors[0] if priors else None
     results_by_code = {
         _code_key(row): row
         for row in (source_rows or payload.get("results") or [])
@@ -511,6 +642,7 @@ def apply_monitor_delta(
             for row in payload.get(bucket) or []:
                 row["monitor_delta"] = None
                 row["follow_through_failed"] = False
+                row["still_streak"] = None
         payload["monitor_delta"] = {"available": False, "reason": "no_yesterday", "as_of": session.isoformat()}
     else:
         yesterday_names = [
@@ -545,21 +677,32 @@ def apply_monitor_delta(
                 code = _code_key(row)
                 yest = yesterday_by_code.get(code)
                 if not yest:
-                    row["monitor_delta"] = "新"
+                    row["monitor_delta"] = DELTA_NEW
+                    row["still_streak"] = None
                 elif str(yest.get("bucket") or "") == bucket:
-                    row["monitor_delta"] = "仍在"
+                    row["monitor_delta"] = DELTA_STILL
+                    row["still_streak"] = _still_streak(code, bucket, priors)
                 else:
-                    row["monitor_delta"] = "换桶"
+                    row["monitor_delta"] = DELTA_SWITCHED
+                    row["still_streak"] = None
                 row["follow_through_failed"] = is_follow_through_failed(yest, row) if yest else False
+        median, prior_n = _median_prior_new(priors)
         payload["monitor_delta"] = {
             "available": True,
             "as_of": snapshot.get("as_of"),
             "left": left,
             "follow_through_failed": follow_failed,
+            "prior_new_median": median,
+            "prior_new_n": prior_n,
         }
 
+    fill_listed_distance_to_stop(payload)
+    payload["monitor_delta"]["counts"] = _delta_counts(payload)
+
     if persist:
-        save_monitor_snapshot(build_monitor_snapshot(payload, market=market, as_of=session), market=market, as_of=session)
+        snapshot_payload = build_monitor_snapshot(payload, market=market, as_of=session)
+        snapshot_payload["counts"] = payload["monitor_delta"].get("counts") or {}
+        save_monitor_snapshot(snapshot_payload, market=market, as_of=session)
     return payload
 
 
@@ -580,10 +723,19 @@ def apply_holdings_monitor_overlay(
             holding = by_code.get(code)
             if holding:
                 row["is_holding"] = True
-                row["distance_to_stop_n"] = holding.get("distance_to_stop_n")
+                holding_dist = holding.get("distance_to_stop_n")
+                if holding_dist is not None:
+                    row["distance_to_stop_n"] = holding_dist
+                else:
+                    dist = listed_distance_to_stop_n(row)
+                    if dist is not None:
+                        row["distance_to_stop_n"] = dist
                 row["turtle_action"] = holding.get("turtle_action")
             else:
                 row.setdefault("is_holding", False)
+                dist = listed_distance_to_stop_n(row)
+                if dist is not None:
+                    row["distance_to_stop_n"] = dist
     overlay: List[Dict[str, Any]] = []
     for row in rows:
         code = _code_key(row)
@@ -609,7 +761,7 @@ def format_holdings_overlay_lines(payload: Dict[str, Any]) -> List[str]:
         action = action_label.get(str(row.get("turtle_action") or "keep"), row.get("turtle_action") or "持有")
         dist = row.get("distance_to_stop_n")
         dist_txt = f"{dist}" if dist is not None else "暂无"
-        lines.append(f"- **{name} ({code})**: {loc} | {action} | 距2N={dist_txt}")
+        lines.append(f"- **{name} ({code})**: {loc} | {action} | 距2N止损={dist_txt}")
     lines.append("")
     return lines
 
@@ -639,7 +791,7 @@ def format_index_regime_lines(index_regime: Optional[Dict[str, Any]]) -> List[st
 
 
 def format_monitor_table_lines(rows: Sequence[Dict[str, Any]]) -> List[str]:
-    """Compact daily-monitor table: event + risk/liquidity, no potential grade."""
+    """Daily-monitor table: event + risk/liquidity, no potential grade."""
     from src.services.hsi_scanner import (
         _report_cell,
         format_atr_pct_cell,
@@ -649,21 +801,18 @@ def format_monitor_table_lines(rows: Sequence[Dict[str, Any]]) -> List[str]:
     )
 
     lines = [
-        "| 代号 | 名称 | 收盘 | 对照 | 持仓 | 距2N | 事件 | S1开 | 趋势 | MA100 | 延伸N | 量比 | 均额 | ATR% | S1近C | S2近C |",
-        "|------|------|------|------|------|------|------|------|------|------|------|------|------|------|------|------|",
+        "| 代号 | 名称 | 收盘 | 是否持仓 | 距2N止损(N倍) | 事件 | S1允许开仓 | 个股趋势过滤 | MA100 | 突破延伸N | 量比 | 20日均额 | ATR% | S1近2日收盘首破 | S2近2日收盘首破 | 昨日信号 |",
+        "|------|------|------|----------|----------------|------|------------|--------------|-------|-----------|------|----------|------|------------------|------------------|----------|",
     ]
     for row in rows or []:
         event = row.get("monitor_event") or monitor_event_label(row)
-        delta = row.get("monitor_delta") or "—"
-        if row.get("follow_through_failed"):
-            delta = f"{delta}·跟丢" if delta and delta != "—" else "跟丢"
         holding = "是" if row.get("is_holding") else "—"
-        dist = row.get("distance_to_stop_n")
+        dist = listed_distance_to_stop_n(row)
         dist_txt = _report_cell(dist) if dist is not None else "—"
+        signal = FOLLOW_THROUGH_LABEL if row.get("follow_through_failed") else "—"
         lines.append(
             f"| [{row.get('code', '')}]({row.get('url', '')}) | {row.get('name', '')} "
             f"| {_report_cell(row.get('close'))} "
-            f"| {delta} "
             f"| {holding} "
             f"| {dist_txt} "
             f"| {event} "
@@ -675,7 +824,8 @@ def format_monitor_table_lines(rows: Sequence[Dict[str, Any]]) -> List[str]:
             f"| {format_turnover_cell(row.get('avg_turnover_20'))} "
             f"| {format_atr_pct_cell(row.get('atr_pct'))} "
             f"| {format_recent_breakout_timing(row.get('s1_recent_close_timing'))} "
-            f"| {format_recent_breakout_timing(row.get('s2_recent_close_timing'))} |"
+            f"| {format_recent_breakout_timing(row.get('s2_recent_close_timing'))} "
+            f"| {signal} |"
         )
     return lines
 
@@ -692,24 +842,72 @@ def format_monitor_fact_lines(row: Dict[str, Any]) -> List[str]:
     vol_ratio = row.get("volume_ratio")
     turnover = format_turnover_cell(row.get("avg_turnover_20"))
     atr = format_atr_pct_cell(row.get("atr_pct"))
+    extras = []
+    dist = listed_distance_to_stop_n(row)
+    if dist is not None:
+        extras.append(f"距2N止损={dist}")
+    if row.get("monitor_delta") == DELTA_STILL and row.get("still_streak"):
+        extras.append(f"连续仍在日数={row.get('still_streak')}")
+    if row.get("follow_through_failed"):
+        extras.append(FOLLOW_THROUGH_LABEL)
+    extra_bit = f" | {' | '.join(extras)}" if extras else ""
     return [
         f"- **{name} ({code})**: {event}",
         (
             f"  - N={n_val if n_val is not None else '暂无'}"
             f" | 2N止损={stop_2n if stop_2n is not None else '暂无'}"
-            f" | 延伸N={ext_n if ext_n is not None else '暂无'}"
+            f" | 突破延伸N={ext_n if ext_n is not None else '暂无'}"
             f" | 量比={vol_ratio if vol_ratio is not None else '暂无'}"
-            f" | 均额={turnover}"
+            f" | 20日均额={turnover}"
             f" | ATR%={atr}"
+            f"{extra_bit}"
         ),
     ]
+
+
+def format_monitor_summary_lines(payload: Dict[str, Any]) -> List[str]:
+    delta = payload.get("monitor_delta") or {}
+    lines: List[str] = ["## 今日监控摘要", ""]
+    if bool(payload.get("uprising_suppressed")):
+        lines.append("- 趋势首破因大盘趋势未过已省略")
+    if delta.get("available") is False and delta.get("reason") == "no_yesterday":
+        lines.append(f"- {NO_YESTERDAY_TEXT}")
+        lines.append("")
+        return lines
+    if not delta.get("available"):
+        if len(lines) == 2:
+            return []
+        lines.append("")
+        return lines
+    counts = delta.get("counts") or {}
+
+    def _bucket_line(key: str, title: str) -> str:
+        grouped = counts.get(key) or {}
+        return (
+            f"- {title}: {DELTA_SECTION_HEADINGS[DELTA_NEW]} {grouped.get(DELTA_NEW, 0)}"
+            f" | {DELTA_SECTION_HEADINGS[DELTA_STILL]} {grouped.get(DELTA_STILL, 0)}"
+            f" | {DELTA_SECTION_HEADINGS[DELTA_SWITCHED]} {grouped.get(DELTA_SWITCHED, 0)}"
+        )
+
+    lines.append(_bucket_line("uprising", "趋势首破"))
+    lines.append(_bucket_line("reversal", "止跌转折"))
+    lines.append(
+        f"- {LEFT_LABEL} {counts.get('left', 0)}"
+        f" | {FOLLOW_THROUGH_LABEL} {counts.get('follow_through_failed', 0)}"
+    )
+    median = delta.get("prior_new_median")
+    prior_n = delta.get("prior_new_n") or 0
+    if median is not None and prior_n:
+        lines.append(
+            f"- 近{prior_n}次扫描今日新入名单中位数 {median:g}（仅作环境对照，不是预测）"
+        )
+    lines.append("")
+    return lines
 
 
 def _format_delta_follow_section(payload: Dict[str, Any], bucket: str) -> List[str]:
     delta = payload.get("monitor_delta") or {}
     if not delta.get("available"):
-        if delta.get("reason") == "no_yesterday":
-            return ["无昨日对照。\n"]
         return []
     left = [
         item for item in (delta.get("left") or [])
@@ -720,12 +918,12 @@ def _format_delta_follow_section(payload: Dict[str, Any], bucket: str) -> List[s
         if str(item.get("from_bucket") or item.get("bucket") or "") == bucket
         or str(item.get("today_bucket") or "") == bucket
     ]
-    lines = ["### 离开 / 跟丢\n"]
+    lines = [f"### {LEFT_SECTION_HEADING}\n"]
     if not left and not failed:
         lines.append("无。\n")
         return lines
     for item in left:
-        tag = "跟丢" if item.get("follow_through_failed") else "离开"
+        tag = FOLLOW_THROUGH_LABEL if item.get("follow_through_failed") else LEFT_LABEL
         lines.append(
             f"- {tag}: {item.get('name') or ''} ({item.get('code')}) "
             f"{item.get('monitor_event') or ''}".rstrip()
@@ -735,24 +933,42 @@ def _format_delta_follow_section(payload: Dict[str, Any], bucket: str) -> List[s
         code = str(item.get("code") or "")
         if code in seen:
             continue
-        lines.append(f"- 跟丢: {item.get('name') or ''} ({code})")
+        lines.append(f"- {FOLLOW_THROUGH_LABEL}: {item.get('name') or ''} ({code})")
     lines.append("")
+    return lines
+
+
+def _format_bucket_tables(rows: Sequence[Dict[str, Any]], *, has_delta: bool) -> List[str]:
+    listed = list(rows or [])
+    if not listed:
+        return []
+    if not has_delta:
+        lines = format_monitor_table_lines(listed)
+        lines.append("")
+        return lines
+    lines: List[str] = []
+    for token in (DELTA_NEW, DELTA_STILL, DELTA_SWITCHED):
+        group = [row for row in listed if row.get("monitor_delta") == token]
+        if not group:
+            continue
+        lines.append(f"### {delta_label(token)}\n")
+        lines.extend(format_monitor_table_lines(group))
+        lines.append("")
     return lines
 
 
 def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
     """Render 趋势首破 / 止跌转折 tables plus short fact lines."""
+    fill_listed_distance_to_stop(payload)
     uprising = list(payload.get("uprising") or [])
     reversal = list(payload.get("reversal") or [])
     suppressed = bool(payload.get("uprising_suppressed"))
     stats = payload.get("stats") or {}
     cap = stats.get("monitor_limit")
-    delta = payload.get("monitor_delta") or {}
+    has_delta = bool((payload.get("monitor_delta") or {}).get("available"))
     lines: List[str] = []
+    lines.extend(format_monitor_summary_lines(payload))
     lines.extend(format_holdings_overlay_lines(payload))
-
-    if delta.get("available") is False and delta.get("reason") == "no_yesterday":
-        lines.append("- 无昨日对照\n")
 
     lines.append("## 趋势首破\n")
     if suppressed:
@@ -762,8 +978,7 @@ def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
         total = stats.get("uprising_total", len(uprising))
         if cap and total > len(uprising):
             lines.append(f"显示 {len(uprising)} / {total}（上限 {cap}）\n")
-        lines.extend(format_monitor_table_lines(uprising))
-        lines.append("")
+        lines.extend(_format_bucket_tables(uprising, has_delta=has_delta))
         lines.extend(_format_delta_follow_section(payload, "uprising"))
         lines.append("### 要点\n")
         for row in uprising:
@@ -778,8 +993,7 @@ def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
         total = stats.get("reversal_total", len(reversal))
         if cap and total > len(reversal):
             lines.append(f"显示 {len(reversal)} / {total}（上限 {cap}）\n")
-        lines.extend(format_monitor_table_lines(reversal))
-        lines.append("")
+        lines.extend(_format_bucket_tables(reversal, has_delta=has_delta))
         lines.extend(_format_delta_follow_section(payload, "reversal"))
         lines.append("### 要点\n")
         for row in reversal:

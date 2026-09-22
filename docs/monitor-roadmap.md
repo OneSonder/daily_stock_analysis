@@ -27,7 +27,7 @@ flowchart TD
 | Slice | Status | Notes |
 | --- | --- | --- |
 | P0 2y then 5y HSI replay, record E-ratio vs random | **Not done** | Local runs were aborted. Other machine should start here. No live gate changes. |
-| P1 Yesterday delta (新/仍在/离开/换桶 + 跟丢) | Done | Snapshot under `data/monitor_state/` (gitignored). Actions cache restore/save. |
+| P1 Yesterday delta (新/仍在/离开/换桶 + 跟丢) | Done | Snapshot under `data/monitor_state/` (gitignored). Actions cache restore/save. Report uses long labels and split 今日新入 / 昨日仍在 tables. |
 | P2 Holdings overlay on monitor lists | Done | `持仓` + 距2N. HK uses `HSI_HOLDINGS` if set. No extra LLM. |
 | P3 `--book turtle` | Done | 1% units, ½N adds, 4/name 12 total, Donchian exit. Simulator only. |
 | P4 `--universe hk` | Done | Live liquidity gates. Use `--codes` to smoke. Not CI. |
@@ -56,23 +56,23 @@ If uprising E-ratio is not clearly above random, **do not** tighten live gates i
 
 Snapshot + classify in [`src/services/daily_monitor.py`](../src/services/daily_monitor.py); keep caps and admission rules unchanged.
 
-**Snapshot** (gitignored under `/data/`): `data/monitor_state/{hsi|hk}_{YYYY-MM-DD}.json` with as-of date, `index_trend_ok`, and per shown name: `code`, `bucket`, `close`, `n`, `stop_long_2n`, S1/S2 close flags. Load the latest file with date **before** this run’s session date (skip today if a re-run). Missing snapshot → no delta, report says 无昨日对照.
+**Snapshot** (gitignored under `/data/`): `data/monitor_state/{hsi|hk}_{YYYY-MM-DD}.json` with as-of date, `index_trend_ok`, and per shown name: `code`, `bucket`, `close`, `n`, `stop_long_2n`, S1/S2 close flags. Load the latest file with date **before** this run’s session date (skip today if a re-run). Missing snapshot → no delta, report says 无昨日名单可对照（首次或快照缺失）.
 
 **Membership (per bucket, on the capped lists):**
 
-- **新**: today, not yesterday
-- **仍在**: both days, same bucket
-- **离开**: yesterday, not today
-- **换桶**: yesterday other bucket, today this one (not 离开)
+- **今日新入名单** (`new`): today, not yesterday
+- **昨日已在、今日仍在** (`still`): both days, same bucket
+- **今日离开名单**: yesterday, not today
+- **从另一名单换入** (`switched`): yesterday other bucket, today this one (not 离开)
 
-**Follow-through failed** (tag, not a fourth list): yesterday on **either** capped list, and today’s **evaluated** row (from `results`, even if capped off) has:
+**未守住昨日信号** (tag, not a fourth list): yesterday on **either** capped list, and today’s **evaluated** row (from `results`, even if capped off) has:
 
 - low or close at/below yesterday `stop_long_2n`, or
 - S2 event yesterday and today’s `close_vs_s2_entry` is false, or S1-only event and today’s `close_vs_entry` is false
 
-A name can be **仍在** and **跟丢**. 离开 can also be 跟丢.
+A name can be **昨日已在、今日仍在** and **未守住昨日信号**. 今日离开名单 can also be 未守住昨日信号.
 
-Render: extra column `对照` on `format_monitor_table_lines` (新/仍在/换桶) plus a short **离开 / 跟丢** subsection under each list. No 档/分.
+Render: split each list into 今日新入名单 / 昨日已在、今日仍在 / 从另一名单换入 (no short `对照` column) plus **今日离开名单 / 未守住昨日信号**. No 档/分.
 
 **Actions:** restore/save `data/monitor_state` with `actions/cache` in [`.github/workflows/hsi_scan.yml`](../.github/workflows/hsi_scan.yml) and [`.github/workflows/hk_stocks_scan.yml`](../.github/workflows/hk_stocks_scan.yml). First Actions run after this ships will have no yesterday.
 

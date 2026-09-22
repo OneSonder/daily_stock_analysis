@@ -212,6 +212,9 @@ def test_apply_monitor_and_report_sections():
     assert "S2 Close 今日首破" in text
     assert "| 档 |" not in text
     assert "| 分 |" not in text
+    assert "距2N止损(N倍)" in text
+    assert "S1允许开仓" in text
+    assert payload["uprising"][0]["distance_to_stop_n"] == 2.0
 
 
 def test_suppressed_uprising_line_in_report():
@@ -225,6 +228,7 @@ def test_suppressed_uprising_line_in_report():
     text = "\n".join(format_monitor_list_sections(payload))
     assert "大盘趋势未过，今日不列趋势首破" in text
     assert "没有股票符合止跌转折条件" in text
+    assert "趋势首破因大盘趋势未过已省略" in text
 
 
 def test_index_insufficient_banner():
@@ -269,11 +273,19 @@ def test_monitor_delta_new_still_left_and_bucket_switch(tmp_path: Path, monkeypa
         persist_state=False,
     )
     by_code = {row["code"]: row["monitor_delta"] for row in today["uprising"]}
-    assert by_code["0700.HK"] == "仍在"
-    assert by_code["9988.HK"] == "新"
+    assert by_code["0700.HK"] == "still"
+    assert by_code["9988.HK"] == "new"
+    still_row = next(row for row in today["uprising"] if row["code"] == "0700.HK")
+    assert still_row["still_streak"] == 2
+    assert still_row["distance_to_stop_n"] == 2.0
     assert today["monitor_delta"]["left"] == []
     text = "\n".join(format_monitor_list_sections(today))
-    assert "对照" in text
+    assert "今日新入名单" in text
+    assert "昨日已在、今日仍在" in text
+    assert "距2N止损(N倍)" in text
+    assert "是否持仓" in text
+    assert "| 对照 |" not in text
+    assert "连续仍在日数=2" in text
 
 
 def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
@@ -324,9 +336,13 @@ def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
         as_of=date(2026, 9, 15),
         persist_state=False,
     )
-    assert still["uprising"][0]["monitor_delta"] == "换桶"
+    assert still["uprising"][0]["monitor_delta"] == "switched"
     left_codes = {item["code"] for item in still["monitor_delta"]["left"]}
     assert "0700.HK" in left_codes
+    text = "\n".join(format_monitor_list_sections(still))
+    assert "从另一名单换入" in text
+    assert "今日离开名单" in text
+    assert "未守住昨日信号" in text or "今日离开名单 / 未守住昨日信号" in text
 
 
 def test_follow_through_failed_on_stop_and_lost_channel():
@@ -348,7 +364,8 @@ def test_missing_snapshot_is_quiet(tmp_path: Path, monkeypatch):
     apply_monitor_delta(payload, market="hsi", as_of=date(2026, 9, 15), persist=False)
     assert payload["monitor_delta"]["available"] is False
     text = "\n".join(format_monitor_list_sections(payload))
-    assert "无昨日对照" in text
+    assert "无昨日名单可对照（首次或快照缺失）" in text
+    assert "### 今日离开名单 / 未守住昨日信号" not in text
 
 
 def test_holdings_overlay_on_list_and_off_list():
@@ -369,6 +386,7 @@ def test_holdings_overlay_on_list_and_off_list():
     text = "\n".join(format_monitor_list_sections(payload))
     assert "## 持仓对照" in text
     assert "未入名单" in text
+    assert "距2N止损=" in text
 
 
 def test_holdings_overlay_empty_when_no_holdings():
