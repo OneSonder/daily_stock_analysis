@@ -30,6 +30,9 @@ NO_YESTERDAY_TEXT = "无昨日名单可对照（首次或快照缺失）"
 FOLLOW_THROUGH_LABEL = "未守住昨日信号"
 LEFT_LABEL = "今日离开名单"
 LEFT_SECTION_HEADING = "今日离开名单 / 未守住昨日信号"
+CROWDED_DAY_TEXT = (
+    "今日新入多于近期中位数，同一天多只名字往往是同一指数行情，不是多笔独立机会。"
+)
 PRIOR_NEW_WINDOW = 5
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -865,6 +868,45 @@ def format_monitor_fact_lines(row: Dict[str, Any]) -> List[str]:
     ]
 
 
+def format_investor_card_lines(row: Dict[str, Any], *, show_membership: bool = True) -> List[str]:
+    """Short markdown card for one listed name. Not a forecast."""
+    from src.services.hsi_scanner import _report_cell, format_ma100_cell
+
+    code = str(row.get("code") or "")
+    name = row.get("name") or code
+    url = row.get("url") or ""
+    title = f"**{name}** [{code}]({url})" if url else f"**{name}** {code}"
+    if show_membership and row.get("monitor_delta"):
+        title = f"{title} · {delta_label(row.get('monitor_delta'))}"
+    event = row.get("monitor_event") or monitor_event_label(row)
+    close_txt = _report_cell(row.get("close"))
+    stop_txt = _report_cell(row.get("stop_long_2n"))
+    dist = listed_distance_to_stop_n(row)
+    dist_txt = f"{_report_cell(dist)}N" if dist is not None else "暂无"
+    trend = "个股趋势过滤通过" if row.get("turtle_trend_ok") else "个股趋势过滤未过"
+    ma100 = format_ma100_cell(row.get("close_vs_ma100"))
+    ma100_txt = {"上": "MA100上方", "下": "MA100下方"}.get(ma100, "MA100不足")
+    vol_txt = _report_cell(row.get("volume_ratio"))
+    ext_txt = _report_cell(row.get("breakout_extension_n"))
+    status: List[str] = []
+    if row.get("is_holding"):
+        status.append("是否持仓：是")
+    if row.get("follow_through_failed"):
+        status.append(FOLLOW_THROUGH_LABEL)
+    if row.get("monitor_delta") == DELTA_STILL and row.get("still_streak"):
+        status.append(f"连续仍在日数 {row.get('still_streak')}")
+    lines = [
+        title,
+        event,
+        f"收盘 {close_txt} | 2N止损 {stop_txt} | 距2N止损 {dist_txt}",
+        f"{trend} · {ma100_txt} · 量比 {vol_txt} · 突破延伸N {ext_txt}",
+    ]
+    if status:
+        lines.append(" · ".join(status))
+    lines.append("")
+    return lines
+
+
 def format_monitor_summary_lines(payload: Dict[str, Any]) -> List[str]:
     delta = payload.get("monitor_delta") or {}
     lines: List[str] = ["## 今日监控摘要", ""]
@@ -901,6 +943,19 @@ def format_monitor_summary_lines(payload: Dict[str, Any]) -> List[str]:
         lines.append(
             f"- 近{prior_n}次扫描今日新入名单中位数 {median:g}（仅作环境对照，不是预测）"
         )
+    today_new = counts.get("new")
+    if today_new is None:
+        today_new = (
+            (counts.get("uprising") or {}).get(DELTA_NEW, 0)
+            + (counts.get("reversal") or {}).get(DELTA_NEW, 0)
+        )
+    if (
+        median is not None
+        and int(prior_n) >= 2
+        and today_new is not None
+        and float(today_new) > float(median)
+    ):
+        lines.append(f"- {CROWDED_DAY_TEXT}")
     lines.append("")
     return lines
 
@@ -935,6 +990,26 @@ def _format_delta_follow_section(payload: Dict[str, Any], bucket: str) -> List[s
             continue
         lines.append(f"- {FOLLOW_THROUGH_LABEL}: {item.get('name') or ''} ({code})")
     lines.append("")
+    return lines
+
+
+def _format_bucket_cards(rows: Sequence[Dict[str, Any]], *, has_delta: bool) -> List[str]:
+    listed = list(rows or [])
+    if not listed:
+        return []
+    if not has_delta:
+        lines: List[str] = []
+        for row in listed:
+            lines.extend(format_investor_card_lines(row, show_membership=False))
+        return lines
+    lines = []
+    for token in (DELTA_NEW, DELTA_STILL, DELTA_SWITCHED):
+        group = [row for row in listed if row.get("monitor_delta") == token]
+        if not group:
+            continue
+        lines.append(f"### {delta_label(token)}\n")
+        for row in group:
+            lines.extend(format_investor_card_lines(row, show_membership=True))
     return lines
 
 
@@ -978,8 +1053,10 @@ def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
         total = stats.get("uprising_total", len(uprising))
         if cap and total > len(uprising):
             lines.append(f"显示 {len(uprising)} / {total}（上限 {cap}）\n")
-        lines.extend(_format_bucket_tables(uprising, has_delta=has_delta))
+        lines.extend(_format_bucket_cards(uprising, has_delta=has_delta))
         lines.extend(_format_delta_follow_section(payload, "uprising"))
+        lines.append("### 明细表\n")
+        lines.extend(_format_bucket_tables(uprising, has_delta=has_delta))
         lines.append("### 要点\n")
         for row in uprising:
             lines.extend(format_monitor_fact_lines(row))
@@ -993,8 +1070,10 @@ def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
         total = stats.get("reversal_total", len(reversal))
         if cap and total > len(reversal):
             lines.append(f"显示 {len(reversal)} / {total}（上限 {cap}）\n")
-        lines.extend(_format_bucket_tables(reversal, has_delta=has_delta))
+        lines.extend(_format_bucket_cards(reversal, has_delta=has_delta))
         lines.extend(_format_delta_follow_section(payload, "reversal"))
+        lines.append("### 明细表\n")
+        lines.extend(_format_bucket_tables(reversal, has_delta=has_delta))
         lines.append("### 要点\n")
         for row in reversal:
             lines.extend(format_monitor_fact_lines(row))

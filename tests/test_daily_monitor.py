@@ -7,12 +7,15 @@ from datetime import date
 from pathlib import Path
 
 from src.services.daily_monitor import (
+    CROWDED_DAY_TEXT,
     apply_holdings_monitor_overlay,
     apply_monitor_delta,
     apply_monitor_to_scan_payload,
     classify_daily_monitor,
     format_index_regime_lines,
+    format_investor_card_lines,
     format_monitor_list_sections,
+    format_monitor_summary_lines,
     is_follow_through_failed,
     is_reversal_row,
     is_uprising_row,
@@ -215,6 +218,15 @@ def test_apply_monitor_and_report_sections():
     assert "距2N止损(N倍)" in text
     assert "S1允许开仓" in text
     assert payload["uprising"][0]["distance_to_stop_n"] == 2.0
+    assert "腾讯" in text
+    assert "2N止损" in text
+    assert "距2N止损" in text
+    assert "### 明细表" in text
+    card = "\n".join(format_investor_card_lines(payload["uprising"][0], show_membership=False))
+    assert "腾讯" in card
+    assert "S2 Close 今日首破" in card
+    assert "2N止损" in card
+    assert "距2N止损" in card
 
 
 def test_suppressed_uprising_line_in_report():
@@ -286,6 +298,12 @@ def test_monitor_delta_new_still_left_and_bucket_switch(tmp_path: Path, monkeypa
     assert "是否持仓" in text
     assert "| 对照 |" not in text
     assert "连续仍在日数=2" in text
+    assert text.index("今日新入名单") < text.index("### 明细表")
+    new_row = next(row for row in today["uprising"] if row["code"] == "9988.HK")
+    card = "\n".join(format_investor_card_lines(new_row, show_membership=True))
+    assert "今日新入名单" in card
+    assert "2N止损" in card
+    assert "距2N止损" in card
 
 
 def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
@@ -343,6 +361,53 @@ def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
     assert "从另一名单换入" in text
     assert "今日离开名单" in text
     assert "未守住昨日信号" in text or "今日离开名单 / 未守住昨日信号" in text
+
+
+def test_crowded_day_sentence_only_when_new_exceeds_median():
+    row = _row(s2_recent_close_breakout=True)
+    crowded = {
+        "uprising": [row],
+        "reversal": [],
+        "monitor_delta": {
+            "available": True,
+            "counts": {
+                "uprising": {"new": 3, "still": 0, "switched": 0},
+                "reversal": {"new": 0, "still": 0, "switched": 0},
+                "new": 3,
+            },
+            "prior_new_median": 1.0,
+            "prior_new_n": 2,
+        },
+    }
+    text = "\n".join(format_monitor_summary_lines(crowded))
+    assert CROWDED_DAY_TEXT in text
+    quiet = {
+        "uprising": [row],
+        "reversal": [],
+        "monitor_delta": {
+            "available": True,
+            "counts": {
+                "uprising": {"new": 1, "still": 0, "switched": 0},
+                "reversal": {"new": 0, "still": 0, "switched": 0},
+                "new": 1,
+            },
+            "prior_new_median": 2.0,
+            "prior_new_n": 2,
+        },
+    }
+    quiet_text = "\n".join(format_monitor_summary_lines(quiet))
+    assert CROWDED_DAY_TEXT not in quiet_text
+    thin = {
+        "uprising": [row],
+        "reversal": [],
+        "monitor_delta": {
+            "available": True,
+            "counts": {"new": 5},
+            "prior_new_median": 1.0,
+            "prior_new_n": 1,
+        },
+    }
+    assert CROWDED_DAY_TEXT not in "\n".join(format_monitor_summary_lines(thin))
 
 
 def test_follow_through_failed_on_stop_and_lost_channel():
