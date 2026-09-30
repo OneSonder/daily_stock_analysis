@@ -76,17 +76,19 @@ def test_uprising_rejects_no_volume_late_extension_exit_and_missing_ma100():
     assert is_uprising_row(_row(s2_recent_close_breakout=True, turtle_trend_ok=False)) is False
 
 
-def test_reversal_is_s1_close_while_trend_or_ma100_off():
+def test_reversal_is_s1_close_above_ma100_while_trend_off():
     down = _row(
         s1_recent_close_breakout=True,
         turtle_trend_ok=False,
-        close_vs_ma100=False,
+        close_vs_ma100=True,
     )
     assert is_reversal_row(down) is True
     still_trend = _row(s1_recent_close_breakout=True, turtle_trend_ok=True, close_vs_ma100=True)
     assert is_reversal_row(still_trend) is False
-    below_ma = _row(s1_recent_close_breakout=True, turtle_trend_ok=True, close_vs_ma100=False)
-    assert is_reversal_row(below_ma) is True
+    below_ma = _row(s1_recent_close_breakout=True, turtle_trend_ok=False, close_vs_ma100=False)
+    assert is_reversal_row(below_ma) is False
+    missing_ma = _row(s1_recent_close_breakout=True, turtle_trend_ok=False, close_vs_ma100=None)
+    assert is_reversal_row(missing_ma) is False
     no_vol = _row(s1_recent_close_breakout=True, turtle_trend_ok=False, volume_confirm=False)
     assert is_reversal_row(no_vol) is False
 
@@ -105,7 +107,7 @@ def test_classify_uprising_wins_over_reversal_and_caps():
         code="9988.HK",
         s1_recent_close_breakout=True,
         turtle_trend_ok=False,
-        close_vs_ma100=False,
+        close_vs_ma100=True,
         s2_recent_close_breakout=False,
         potential_score=90,
     )
@@ -142,7 +144,7 @@ def test_weak_index_suppresses_uprising_keeps_reversal():
         code="1810.HK",
         s1_recent_close_breakout=True,
         turtle_trend_ok=False,
-        close_vs_ma100=False,
+        close_vs_ma100=True,
         s2_recent_close_breakout=False,
     )
     classified = classify_daily_monitor([up, rev], index_trend_ok=False)
@@ -178,7 +180,7 @@ def test_apply_monitor_and_report_sections():
                 s1_recent_close_breakout=True,
                 s1_recent_close_timing="previous",
                 turtle_trend_ok=False,
-                close_vs_ma100=False,
+                close_vs_ma100=True,
                 s2_recent_close_breakout=False,
             ),
         ],
@@ -314,7 +316,7 @@ def test_monitor_delta_still_and_switch(tmp_path: Path, monkeypatch):
                 code="1810.HK",
                 s1_recent_close_breakout=True,
                 turtle_trend_ok=False,
-                close_vs_ma100=False,
+                close_vs_ma100=True,
                 s2_recent_close_breakout=False,
                 date="2026-09-14",
             ),

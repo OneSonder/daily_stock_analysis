@@ -370,7 +370,7 @@ def test_run_hk_stocks_scan_monitor_filters_then_classifies(
         "breakout_extension_n": 0.2,
         "s1_exit": False,
         "s2_exit": False,
-        "close_vs_ma100": False,
+        "close_vs_ma100": True,
         "potential_score": 88,
     }
     thin = {
@@ -389,11 +389,28 @@ def test_run_hk_stocks_scan_monitor_filters_then_classifies(
         "close_vs_ma100": True,
         "potential_score": 99,
     }
+    below = {
+        "code": "BELOW.HK",
+        "name": "线下",
+        "status": "ok",
+        "close": 20.0,
+        "avg_turnover_20": 8_000_000,
+        "s1_recent_close_breakout": True,
+        "s2_recent_close_breakout": False,
+        "s1_entry_allowed": True,
+        "turtle_trend_ok": False,
+        "volume_confirm": True,
+        "breakout_extension_n": 0.2,
+        "s1_exit": False,
+        "s2_exit": False,
+        "close_vs_ma100": False,
+        "potential_score": 90,
+    }
     mock_scan.return_value = {
-        "matches": [thin, uprising, reversal],
-        "results": [thin, uprising, reversal],
+        "matches": [thin, uprising, reversal, below],
+        "results": [thin, uprising, reversal, below],
         "no_price": [],
-        "stats": {"tickers": 3, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 3},
+        "stats": {"tickers": 4, "total_ms": 1, "cache_hits": 0, "batch_downloaded": 4},
         "skipped": False,
         "conditions": ["s1_breakout"],
     }
@@ -408,7 +425,8 @@ def test_run_hk_stocks_scan_monitor_filters_then_classifies(
     )
     assert [m["code"] for m in result["payload"]["uprising"]] == ["0700.HK"]
     assert [m["code"] for m in result["payload"]["reversal"]] == ["9988.HK"]
-    assert result["payload"]["stats"]["liquidity_filtered"] == 1
+    assert result["payload"]["stats"]["liquidity_filtered"] == 2
+    assert result["payload"]["stats"]["require_ma100"] is True
     news_matches = mock_news.call_args.args[0]
     assert [m["code"] for m in news_matches] == ["0700.HK", "9988.HK"]
 

@@ -39,7 +39,7 @@
 
 - 扫描摘要 + **大盘**（恒指趋势 / MA100 / ATR%；恒指趋势未过则不列趋势首破）+ **今日监控摘要**
 - **趋势首破**：近 2 个交易日 Close 首次上穿 20/55 日通道，且趋势过滤通过、放量、MA100 上方、延伸 N ≤ 1.0
-- **止跌转折**：S1 Close 首破，且趋势未过或收盘仍在 MA100 下方，需放量。与趋势首破互斥
+- **止跌转折**：S1 Close 首破，趋势过滤未过，且收盘在 MA100 上方，需放量。与趋势首破互斥
 - 每份名单上限 15（`HK_SCAN_MONITOR_LIMIT`）；投资者卡片（收盘 / 2N止损 / 距2N）在明细表上方，表内是事件 + N/止损/量比，**不是**涨跌预测
 - 每份名单拆成 **今日新入名单** / **昨日已在、今日仍在** / **从另一名单换入**（内部 token 仍是 `new`/`still`/`switched`）。**今日离开名单** = 昨日在名单、今日不在；**未守住昨日信号** = 昨日名单上的名字今日跌破昨 2N 或收盘回到通道内。首次运行显示「无昨日名单可对照（首次或快照缺失）」。摘要里的新入中位数只作环境对照，不是预测。Actions 用 cache 记住 `data/monitor_state`
 - **持仓对照**（可选）：若设置了 `HSI_HOLDINGS`，名单标注是否持仓与距2N止损(N倍)，未入名单也会列出
@@ -54,7 +54,7 @@
 | 名单 | 必须满足 |
 | --- | --- |
 | 趋势首破 | `s2_recent_close_breakout`，或 (`s1_recent_close_breakout` 且 `s1_entry_allowed`)；`turtle_trend_ok`；`volume_confirm`；`close_vs_ma100 is True`；延伸 N 缺失或 ≤ `HK_SCAN_MAX_EXTENSION_N`（默认 1.0）；非 S1/S2 离场 |
-| 止跌转折 | `s1_recent_close_breakout`；`turtle_trend_ok` 为假 **或** `close_vs_ma100` 为假；`volume_confirm`；非 S1 离场；且未进入趋势首破 |
+| 止跌转折 | `s1_recent_close_breakout`；`turtle_trend_ok` 为假；`close_vs_ma100 is True`；`volume_confirm`；非 S1 离场；且未进入趋势首破 |
 
 `potential_score` 只做名单内并列时的次序，**不是**预测。
 
@@ -66,7 +66,7 @@
 | `HK_SCAN_MIN_AVG_TURNOVER` | `2000000` | 近 20 日均成交额下限；缺数据不剔除；`0` 关闭 |
 | `HK_SCAN_REQUIRE_VOLUME_CONFIRM` | `false` | 仅 `monitor=false` 的全局闸门；监控模式由分类器强制放量 |
 | `HK_SCAN_REQUIRE_TREND` | `true` | 仅 `monitor=false` 时剔除趋势未过的匹配。监控模式下趋势只约束「趋势首破」 |
-| `HK_SCAN_REQUIRE_MA100` | `false` | 仅 `monitor=false`。监控的趋势首破本身要求 MA100 上方 |
+| `HK_SCAN_REQUIRE_MA100` | `true` | 收盘低于 MA100 的名字在抓新闻前剔除（缺数据不剔除）。两份监控名单另外都要求 `close_vs_ma100 is True` |
 | `HK_SCAN_MONITOR_LIMIT` | `15` | 每份名单上限 |
 | `HK_SCAN_MAX_EXTENSION_N` | `1.0` | 趋势首破允许的最大突破延伸（N 的倍数） |
 

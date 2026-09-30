@@ -128,7 +128,7 @@ def resolve_hk_require_ma100(require_ma100: Optional[bool] = None) -> bool:
     """
     if require_ma100 is not None:
         return bool(require_ma100)
-    return _env_bool("HK_SCAN_REQUIRE_MA100", False)
+    return _env_bool("HK_SCAN_REQUIRE_MA100", True)
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -508,7 +508,7 @@ def run_hk_stocks_scan(
     if resolved_monitor:
         resolved_require_vol = False
         resolved_require_trend = False
-        resolved_require_ma100 = False
+        resolved_require_ma100 = resolve_hk_require_ma100(require_ma100)
     else:
         resolved_require_vol = resolve_hk_require_volume_confirm(require_volume_confirm)
         resolved_require_trend = resolve_hk_require_trend(require_trend)

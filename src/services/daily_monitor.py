@@ -148,12 +148,12 @@ def is_uprising_row(
 
 
 def is_reversal_row(row: Dict[str, Any]) -> bool:
-    """S1 Close first-cross while Turtle trend or MA100 is still off."""
+    """S1 Close first-cross above MA100 while the Turtle trend filter is still off."""
     if not bool(row.get("s1_recent_close_breakout")):
         return False
-    trend_ok = bool(row.get("turtle_trend_ok"))
-    ma100 = row.get("close_vs_ma100")
-    if trend_ok and ma100 is not False:
+    if row.get("close_vs_ma100") is not True:
+        return False
+    if bool(row.get("turtle_trend_ok")):
         return False
     if not bool(row.get("volume_confirm")):
         return False

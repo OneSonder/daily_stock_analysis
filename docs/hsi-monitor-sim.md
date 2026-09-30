@@ -124,7 +124,7 @@ OHLCV **不**写入 CSV。K 线只进 pickle 缓存。
 
 ## 规则与指标
 
-准入与线上 [`classify_daily_monitor`](../src/services/daily_monitor.py) 相同：Close 首破、放量、MA100/趋势分桶、延伸 N、恒指趋势未过则不列趋势首破。RSI/MACD/K 线不算准入。近 2 日 flag 只在股票 **第一次** 出现在当日名单时计一次警报。
+准入与线上 [`classify_daily_monitor`](../src/services/daily_monitor.py) 相同：Close 首破、放量、收盘在 MA100 上方（两份名单都要）、趋势分桶、延伸 N、恒指趋势未过则不列趋势首破。RSI/MACD/K 线不算准入。近 2 日 flag 只在股票 **第一次** 出现在当日名单时计一次警报。
 
 **警报质量**（相对 **信号收盘**，向前 `horizon` 根 K）：
 
