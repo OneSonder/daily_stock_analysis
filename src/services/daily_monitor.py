@@ -34,6 +34,8 @@ CROWDED_DAY_TEXT = (
     "今日新入多于近期中位数，同一天多只名字往往是同一指数行情，不是多笔独立机会。"
 )
 PRIOR_NEW_WINDOW = 5
+MACD_GOLDEN_CROSS = "金叉"
+MACD_GOLDEN_CROSS_ZERO = "零轴上金叉"
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -372,6 +374,16 @@ def resolve_monitor_delta_enabled(override: Optional[bool] = None) -> bool:
 
 def _code_key(row: Dict[str, Any]) -> str:
     return str(row.get("code") or "").strip().upper()
+
+
+def macd_golden_cross_label(row: Dict[str, Any]) -> str:
+    """Latest-bar DIF cross above DEA. Not an admission rule."""
+    status = str(row.get("macd_status") or "").strip()
+    if status == MACD_GOLDEN_CROSS_ZERO:
+        return MACD_GOLDEN_CROSS_ZERO
+    if status == MACD_GOLDEN_CROSS:
+        return MACD_GOLDEN_CROSS
+    return "无"
 
 
 def delta_label(token: Optional[str]) -> str:
@@ -804,8 +816,8 @@ def format_monitor_table_lines(rows: Sequence[Dict[str, Any]]) -> List[str]:
     )
 
     lines = [
-        "| 代号 | 名称 | 收盘 | 是否持仓 | 距2N止损(N倍) | 事件 | S1允许开仓 | 个股趋势过滤 | MA100 | 突破延伸N | 量比 | 20日均额 | ATR% | S1近2日收盘首破 | S2近2日收盘首破 | 昨日信号 |",
-        "|------|------|------|----------|----------------|------|------------|--------------|-------|-----------|------|----------|------|------------------|------------------|----------|",
+        "| 代号 | 名称 | 收盘 | 是否持仓 | 距2N止损(N倍) | 事件 | S1允许开仓 | 个股趋势过滤 | MA100 | 突破延伸N | 量比 | 20日均额 | ATR% | S1近2日收盘首破 | S2近2日收盘首破 | MACD金叉 | 昨日信号 |",
+        "|------|------|------|----------|----------------|------|------------|--------------|-------|-----------|------|----------|------|------------------|------------------|----------|----------|",
     ]
     for row in rows or []:
         event = row.get("monitor_event") or monitor_event_label(row)
@@ -828,6 +840,7 @@ def format_monitor_table_lines(rows: Sequence[Dict[str, Any]]) -> List[str]:
             f"| {format_atr_pct_cell(row.get('atr_pct'))} "
             f"| {format_recent_breakout_timing(row.get('s1_recent_close_timing'))} "
             f"| {format_recent_breakout_timing(row.get('s2_recent_close_timing'))} "
+            f"| {macd_golden_cross_label(row)} "
             f"| {signal} |"
         )
     return lines
@@ -853,6 +866,7 @@ def format_monitor_fact_lines(row: Dict[str, Any]) -> List[str]:
         extras.append(f"连续仍在日数={row.get('still_streak')}")
     if row.get("follow_through_failed"):
         extras.append(FOLLOW_THROUGH_LABEL)
+    extras.append(f"MACD金叉={macd_golden_cross_label(row)}")
     extra_bit = f" | {' | '.join(extras)}" if extras else ""
     return [
         f"- **{name} ({code})**: {event}",
@@ -900,6 +914,7 @@ def format_investor_card_lines(row: Dict[str, Any], *, show_membership: bool = T
         event,
         f"收盘 {close_txt} | 2N止损 {stop_txt} | 距2N止损 {dist_txt}",
         f"{trend} · {ma100_txt} · 量比 {vol_txt} · 突破延伸N {ext_txt}",
+        f"MACD金叉 {macd_golden_cross_label(row)}",
     ]
     if status:
         lines.append(" · ".join(status))

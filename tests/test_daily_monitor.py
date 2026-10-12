@@ -16,6 +16,7 @@ from src.services.daily_monitor import (
     format_investor_card_lines,
     format_monitor_list_sections,
     format_monitor_summary_lines,
+    format_monitor_table_lines,
     is_follow_through_failed,
     is_reversal_row,
     is_uprising_row,
@@ -54,6 +55,24 @@ def _row(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def test_macd_golden_cross_is_shown_and_does_not_admit():
+    golden = _row(s2_recent_close_breakout=True, macd_status="金叉")
+    zero = _row(code="0005.HK", s2_recent_close_breakout=True, macd_status="零轴上金叉")
+    death = _row(code="1810.HK", s2_recent_close_breakout=True, macd_status="死叉")
+    assert is_uprising_row(golden) is True
+    assert is_uprising_row(death) is True
+    card = "\n".join(format_investor_card_lines(golden, show_membership=False))
+    assert "MACD金叉 金叉" in card
+    zero_card = "\n".join(format_investor_card_lines(zero, show_membership=False))
+    assert "MACD金叉 零轴上金叉" in zero_card
+    death_card = "\n".join(format_investor_card_lines(death, show_membership=False))
+    assert "MACD金叉 无" in death_card
+    table = "\n".join(format_monitor_table_lines([golden, death]))
+    assert "| MACD金叉 |" in table
+    assert "| 金叉 |" in table
+    assert "| 无 |" in table
 
 
 def test_uprising_requires_close_first_cross_not_high_only():
