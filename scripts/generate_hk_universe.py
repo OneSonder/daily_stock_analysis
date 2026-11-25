@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """Generate committed HK_ALL universe snapshot for qualified scans.
 
-Fetches active HK listed symbols from AkShare (East Money spot list) and writes
+Fetches active HK listed symbols from AkShare (East Money spot list, with
+Sina ``stock_hk_spot_sina`` as fallback) and writes
 ``resources/universes/hk_all_stocks.json``.
 
 Usage:
@@ -54,7 +55,7 @@ def fetch_hk_stocks_from_akshare() -> list[dict[str, str]]:
     errors: list[str] = []
     for fetcher_name, fetcher in (
         ("stock_hk_spot_em", lambda: ak.stock_hk_spot_em()),
-        ("stock_hk_spot", lambda: ak.stock_hk_spot()),
+        ("stock_hk_spot_sina", lambda: ak.stock_hk_spot_sina()),
     ):
         try:
             df = fetcher()

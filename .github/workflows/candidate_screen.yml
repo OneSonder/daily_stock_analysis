@@ -1,0 +1,90 @@
+name: US+HK Candidate Screen
+
+# Rules-only Yahoo scan. Not the README 18:00 job and not the old 15:00 HSI cron.
+# HK: 16:20 Asia/Shanghai, Monday-Friday (after the 16:08-16:10 closing auction).
+# US: 05:20 Asia/Shanghai, Tuesday-Saturday (after the regular close in both EST and EDT).
+on:
+  schedule:
+    - cron: '20 8 * * 1-5'
+    - cron: '20 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      market:
+        description: 'Market take to write'
+        required: true
+        default: 'hk'
+        type: choice
+        options:
+          - hk
+          - us
+
+jobs:
+  hk:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.market == 'hk') ||
+      (github.event_name == 'schedule' && github.event.schedule == '20 8 * * 1-5')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run HK candidate screen
+        run: |
+          mkdir -p reports
+          python scripts/run_candidate_screen.py --market hk
+
+      - name: Upload HK candidate take
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-screen-hk
+          path: reports/candidate_screen/hk/
+          if-no-files-found: error
+
+  us:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.market == 'us') ||
+      (github.event_name == 'schedule' && github.event.schedule == '20 21 * * 1-5')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run US candidate screen
+        run: |
+          mkdir -p reports
+          python scripts/run_candidate_screen.py --market us
+
+      - name: Upload US candidate take
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-screen-us
+          path: reports/candidate_screen/us/
+          if-no-files-found: error

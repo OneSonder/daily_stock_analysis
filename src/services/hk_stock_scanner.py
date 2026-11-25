@@ -26,6 +26,10 @@ from src.services.hsi_scanner import (
     scan_stocks,
     sort_matches_by_potential,
 )
+from src.services.candidate_screen_policy import (
+    HK_MIN_AVG_TURNOVER_HKD,
+    HK_MIN_PRICE_HKD,
+)
 from src.services.stock_universes import HK_ALL_STOCKS_PATH, load_hk_all_stocks
 
 logger = logging.getLogger(__name__)
@@ -35,8 +39,11 @@ DEFAULT_MAX_WORKERS = 8
 DEFAULT_NEWS_MAX_AGE_DAYS = 2
 DEFAULT_PERIOD = "1y"
 DEFAULT_CONDITIONS = "s1_breakout,s2_breakout"
-DEFAULT_MIN_PRICE = 0.1
-DEFAULT_MIN_AVG_TURNOVER = 2_000_000.0
+# Same Risk Officer numbers as the daily candidate screen. This research scan
+# still drops a name only when a print is present and below the floor; the
+# daily screen fail-closes instead, and it does not honor a lower env value.
+DEFAULT_MIN_PRICE = HK_MIN_PRICE_HKD
+DEFAULT_MIN_AVG_TURNOVER = HK_MIN_AVG_TURNOVER_HKD
 
 
 class HkUniverseError(RuntimeError):
@@ -78,14 +85,14 @@ def _env_float(name: str, default: float) -> float:
 
 
 def resolve_hk_min_price(min_price: Optional[float] = None) -> float:
-    """Minimum last close for HK matches (0 disables). Default 0.1."""
+    """Minimum last close for HK matches (0 disables). Default HK$1."""
     if min_price is not None:
         return max(0.0, float(min_price))
     return max(0.0, _env_float("HK_SCAN_MIN_PRICE", DEFAULT_MIN_PRICE))
 
 
 def resolve_hk_min_avg_turnover(min_avg_turnover: Optional[float] = None) -> float:
-    """Minimum 20-day average turnover for HK matches (0 disables). Default 2000000."""
+    """Minimum 20-day average turnover for HK matches (0 disables). Default HK$20,000,000."""
     if min_avg_turnover is not None:
         return max(0.0, float(min_avg_turnover))
     return max(0.0, _env_float("HK_SCAN_MIN_AVG_TURNOVER", DEFAULT_MIN_AVG_TURNOVER))

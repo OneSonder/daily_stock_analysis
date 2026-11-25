@@ -46,6 +46,7 @@
 | [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界 |
 | [HSI 每日监控回放](hsi-monitor-sim.md) | 恒指成分上重放趋势首破/止跌转折，E-ratio 与 2N 纸上交易（研究用，非预测）；含换机运行步骤 |
 | [每日监控路线图](monitor-roadmap.md) | P0–P5：昨日对照、持仓对照、海龟纸上账、全港股回放；线上闸门等 5y 证据 |
+| [美股+港股候选筛选](candidate-screen.md) | Phase 1 每日收盘首破名单：恒指成分与 US_TOP、流动性失败关闭、4/6/10/12 显示上限 |
 | [HSI 回放引擎设计](hsi-monitor-simulator-plan.md) | PIT 切片、MAE/MFE/E-ratio、次日开盘 2N 纸上交易的实现说明 |
 | [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明 |
 

@@ -247,7 +247,7 @@ def test_run_hk_stocks_scan_loads_json_universe_no_llm(
                 "name": "腾讯",
                 "status": "ok",
                 "close": 400,
-                "avg_turnover_20": 8_000_000,
+                "avg_turnover_20": 25_000_000,
                 "s2_recent_close_breakout": True,
                 "s1_recent_close_breakout": True,
                 "s1_entry_allowed": True,

@@ -47,6 +47,7 @@ This is the entry point for project documentation. The README covers the project
 | [Image Extraction Prompt](image-extract-prompt.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Prompt and boundaries for extracting stock information from images |
 | [HSI Daily Monitor Replay](hsi-monitor-sim.md) (Chinese runbook) | Replay uprising/reversal lists; includes clone-`mine` + cache-copy vs Yahoo download for a second machine |
 | [Daily monitor roadmap](monitor-roadmap.md) | P0–P5 plan: yesterday delta, holdings overlay, Turtle paper book, HK replay; live gates blocked on 5y evidence |
+| [US+HK candidate screen](candidate-screen.md) | Phase 1 close-first daily take (Chinese runbook; English summary at the top): HSI + US_TOP, fail-closed liquidity, 4/6/10/12 display caps |
 | [HSI replay engine plan](hsi-monitor-simulator-plan.md) | PIT slice, MAE/MFE/E-ratio, next-open 2N paper book |
 | [OpenClaw Skill Integration](openclaw-skill-integration.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | OpenClaw / Skill external integration notes |
 

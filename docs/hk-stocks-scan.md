@@ -3,6 +3,8 @@
 手动 GitHub Actions 工作流，扫描 **全港股快照**，输出每日监控列表与匹配股的腾讯新闻。  
 **不调用任何 LLM / AI**（无 DeepSeek / Kimi / Gemini / LiteLLM），也 **不依赖 Tushare**。
 
+这不是每日候选筛选。每日主名单见 [美股+港股候选筛选](candidate-screen.md)（恒指成分 + `US_TOP`，缺行情则失败关闭）。
+
 工作流文件：[`.github/workflows/hk_stocks_scan.yml`](../.github/workflows/hk_stocks_scan.yml)
 
 ## 前置条件
@@ -62,8 +64,8 @@
 
 | 环境变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `HK_SCAN_MIN_PRICE` | `0.1` | 最低收盘价（港币）；`0` 关闭 |
-| `HK_SCAN_MIN_AVG_TURNOVER` | `2000000` | 近 20 日均成交额下限；缺数据不剔除；`0` 关闭 |
+| `HK_SCAN_MIN_PRICE` | `1` | 最低收盘价（港币）；`0` 关闭。与每日候选筛选同一政策数字 |
+| `HK_SCAN_MIN_AVG_TURNOVER` | `20000000` | 近 20 日均成交额下限（港币）；缺数据不剔除；`0` 关闭。每日候选筛选另行失败关闭，且不能用更低的环境变量放宽 |
 | `HK_SCAN_REQUIRE_VOLUME_CONFIRM` | `false` | 仅 `monitor=false` 的全局闸门；监控模式由分类器强制放量 |
 | `HK_SCAN_REQUIRE_TREND` | `true` | 仅 `monitor=false` 时剔除趋势未过的匹配。监控模式下趋势只约束「趋势首破」 |
 | `HK_SCAN_REQUIRE_MA100` | `true` | 收盘低于 MA100 的名字在抓新闻前剔除（缺数据不剔除）。两份监控名单另外都要求 `close_vs_ma100 is True` |
