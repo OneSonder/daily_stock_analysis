@@ -149,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 将 `exchange-calendars` 依赖下限提升到 `4.13.0`，避免 pandas 3 环境导入交易日历时因 Timedelta 单位 `T` 失效导致分析失败。
 - [测试] 执行 `python -c "import exchange_calendars as xcals; xcals.get_calendar('XSHG'); print('ok')"` 通过验证，以覆盖导入与交易日历初始化兼容性。
 - [新功能] 普通分析与 Agent 运行时 Prompt 接入 AnalysisContextPack 低敏摘要，保持 history/API/Web 输出兼容。
+- [新功能] 新增美股+港股每日候选筛选：恒指成分与 US_TOP 的收盘首破主名单（止跌转折仅附录），官方流动性门槛为港股收盘≥1港元、20日均额≥2000万港元，美股收盘≥5美元、20日均额≥500万美元；缺数据或样本不足失败关闭；显示上限 4/6/10/12；产物 `reports/candidate_screen/<market>/latest.md`；上海时间港股工作日 16:20、美股周二至周六 05:20。
+- [改进] 全港股研究扫描的默认流动性数字改为 1 港元 / 2000 万港元。每日候选筛选不读取更低的环境变量，并且在行情不完整时失败关闭。
+- [修复] 全港股快照脚本的 AkShare 备用源改为 `stock_hk_spot_sina`。本次未替换已提交快照：东方财富限流，新浪列表缺少恒指成分 0300.HK 与 0823.HK。
 
 ## [3.18.0] - 2026-05-21
 
