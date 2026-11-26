@@ -111,6 +111,22 @@ def resolve_max_extension_n(
     return max(0.0, _env_float(env_key, default))
 
 
+def index_trend_allows_uprising(index_trend_ok: Optional[bool]) -> bool:
+    """Only an explicit ``True`` keeps the trend first-break feed; missing data fails closed."""
+    return index_trend_ok is True
+
+
+def uprising_suppressed_by_index(index_trend_ok: Optional[bool]) -> bool:
+    return not index_trend_allows_uprising(index_trend_ok)
+
+
+def format_uprising_suppression_banner(index_trend_ok: Optional[bool]) -> str:
+    """Banner line when the trend feed is omitted. Missing data must not read as 趋势未过."""
+    if index_trend_ok is False:
+        return "大盘趋势未过，今日不列趋势首破。"
+    return "指数趋势数据不足，今日不列趋势首破。"
+
+
 def monitor_event_label(row: Dict[str, Any]) -> str:
     """Short Close-first-cross event for the daily table."""
     from src.services.hsi_scanner import format_recent_breakout_timing
@@ -190,8 +206,9 @@ def classify_daily_monitor(
 ) -> Dict[str, Any]:
     """Split evaluated rows into capped uprising / reversal lists.
 
-    Uprising is omitted when ``index_trend_ok`` is False. Missing index
-    (``None``) does not suppress. A code appears in one list only (uprising wins).
+    Uprising is omitted when ``index_trend_ok`` is not explicitly ``True``
+    (fail closed on ``False`` and missing ``None``). A code appears in one
+    list only (uprising wins).
     """
     cap = max(1, int(limit))
     uprising: List[Dict[str, Any]] = []
@@ -220,7 +237,7 @@ def classify_daily_monitor(
 
     uprising = _sort_monitor_rows(uprising)
     reversal = _sort_monitor_rows(reversal)
-    suppressed = index_trend_ok is False
+    suppressed = uprising_suppressed_by_index(index_trend_ok)
     uprising_shown = [] if suppressed else uprising[:cap]
     reversal_shown = reversal[:cap]
     return {
@@ -231,6 +248,7 @@ def classify_daily_monitor(
         "uprising_total": len(uprising),
         "reversal_total": len(reversal),
         "uprising_suppressed": suppressed,
+        "index_trend_ok": index_trend_ok,
         "matches": uprising_shown + reversal_shown,
         "limit": cap,
         "max_extension_n": max_extension_n,
@@ -338,6 +356,7 @@ def apply_monitor_to_scan_payload(
     payload["uprising"] = classified["uprising"]
     payload["reversal"] = classified["reversal"]
     payload["uprising_suppressed"] = classified["uprising_suppressed"]
+    payload["index_trend_ok"] = index_ok
     payload["matches"] = classified["matches"]
     stats = dict(payload.get("stats") or {})
     stats["uprising"] = len(classified["uprising"])
@@ -926,7 +945,10 @@ def format_monitor_summary_lines(payload: Dict[str, Any]) -> List[str]:
     delta = payload.get("monitor_delta") or {}
     lines: List[str] = ["## 今日监控摘要", ""]
     if bool(payload.get("uprising_suppressed")):
-        lines.append("- 趋势首破因大盘趋势未过已省略")
+        if payload.get("index_trend_ok") is False:
+            lines.append("- 趋势首破因大盘趋势未过已省略")
+        else:
+            lines.append("- 趋势首破因指数趋势数据不足已省略")
     if delta.get("available") is False and delta.get("reason") == "no_yesterday":
         lines.append(f"- {NO_YESTERDAY_TEXT}")
         lines.append("")
@@ -1062,7 +1084,7 @@ def format_monitor_list_sections(payload: Dict[str, Any]) -> List[str]:
 
     lines.append("## 趋势首破\n")
     if suppressed:
-        lines.append("大盘趋势未过，今日不列趋势首破。\n")
+        lines.append(f"{format_uprising_suppression_banner(payload.get('index_trend_ok'))}\n")
         lines.extend(_format_delta_follow_section(payload, "uprising"))
     elif uprising:
         total = stats.get("uprising_total", len(uprising))

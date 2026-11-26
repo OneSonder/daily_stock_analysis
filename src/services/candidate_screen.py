@@ -33,7 +33,13 @@ from src.services.candidate_screen_policy import (
     TURNOVER_WINDOW,
     US_ARTIFACT_LATEST,
 )
-from src.services.daily_monitor import is_reversal_row, is_uprising_row, monitor_event_label
+from src.services.daily_monitor import (
+    format_uprising_suppression_banner,
+    is_reversal_row,
+    is_uprising_row,
+    monitor_event_label,
+    uprising_suppressed_by_index,
+)
 from src.services.hsi_scanner import HSI_STOCKS, evaluate_ticker_from_history
 from src.services.stock_universes import US_TOP_STOCKS
 
@@ -515,7 +521,7 @@ def select_candidates(
             uprising.append(row)
         elif is_reversal_row(row):
             reversal.append(row)
-    suppressed = index_trend_ok is False
+    suppressed = uprising_suppressed_by_index(index_trend_ok)
     if suppressed:
         uprising = []
     for row in uprising + reversal:
@@ -586,18 +592,35 @@ def format_candidate_report(payload: Mapping[str, Any]) -> str:
         lines.append(f"- 指数 {index_regime.get('name') or ''}: 趋势{trend_txt}")
         lines.append("")
     if payload.get("uprising_suppressed"):
-        lines.append("大盘趋势未过，今日不列趋势首破。")
+        lines.append(format_uprising_suppression_banner(payload.get("index_trend_ok")))
         lines.append("")
 
+    def _tri_state_bool(value: Any) -> str:
+        if value is True:
+            return "是"
+        if value is False:
+            return "否"
+        return "—"
+
+    def _gate_extension(value: Any) -> str:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return "—"
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
     def _table(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+        from src.services.hsi_scanner import format_ma100_cell
+
         out = [
-            "| 代号 | 名称 | 货币 | 收盘 | N | 2N止损 | 事件 | 公司 | 紧密组 | 松散组 |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 代号 | 名称 | 货币 | 收盘 | N | 2N止损 | 事件 | S1开仓 | 趋势 | MA100 | 延伸N | 放量 | 公司 | 紧密组 | 松散组 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for row in rows:
             ccy = str(row.get("currency") or currency)
             out.append(
-                "| {code} | {name} | {ccy} | {close} | {n} | {stop} | {event} | {company} | {tight} | {loose} |".format(
+                "| {code} | {name} | {ccy} | {close} | {n} | {stop} | {event} | {s1} | {trend} | {ma100} | {ext} | {vol} | {company} | {tight} | {loose} |".format(
                     code=row.get("code") or "",
                     name=row.get("name") or "",
                     ccy=ccy,
@@ -605,6 +628,11 @@ def format_candidate_report(payload: Mapping[str, Any]) -> str:
                     n=_price(row.get("n"), ccy, 4),
                     stop=_price(row.get("stop_long_2n"), ccy, 2),
                     event=row.get("monitor_event") or monitor_event_label(dict(row)),
+                    s1=_tri_state_bool(row.get("s1_entry_allowed")),
+                    trend=_tri_state_bool(row.get("turtle_trend_ok")),
+                    ma100=format_ma100_cell(row.get("close_vs_ma100")),
+                    ext=_gate_extension(row.get("breakout_extension_n")),
+                    vol=_tri_state_bool(row.get("volume_confirm")),
                     company=row.get("company_id") or "",
                     tight=row.get("tight_group") or "",
                     loose=row.get("loose_group") or "",
@@ -733,8 +761,12 @@ def run_candidate_screen(
     as_of = resolve_as_of(key, current_time=current_time)
     should_fetch = histories is None if fetch is None else bool(fetch)
     frames: Dict[str, pd.DataFrame] = dict(histories or {})
+    index_code = INDEX_BY_MARKET[key][0]
     if should_fetch:
-        frames = _fetch_histories([str(item.get("code") or "") for item in stocks])
+        codes = [str(item.get("code") or "") for item in stocks]
+        if index_code not in codes:
+            codes.append(index_code)
+        frames = _fetch_histories(codes)
 
     errors: List[str] = []
     measured: List[Dict[str, Any]] = []
@@ -769,11 +801,12 @@ def run_candidate_screen(
         raise CandidateScreenDataError(f"fail closed; no list written. {preview}{suffix}")
 
     if index_trend_ok is None:
+        prefetched = index_history if index_history is not None else frames.get(index_code)
         regime = _index_regime(
             key,
             as_of=as_of,
-            index_history=index_history,
-            fetch=should_fetch and index_history is None,
+            index_history=prefetched,
+            fetch=should_fetch and prefetched is None,
         )
         flag = regime.get("turtle_trend_ok")
         index_flag = bool(flag) if regime.get("status") == "ok" else None

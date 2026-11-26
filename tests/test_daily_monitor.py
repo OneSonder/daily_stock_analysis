@@ -148,6 +148,7 @@ def test_classify_uprising_wins_over_reversal_and_caps():
     classified = classify_daily_monitor(
         [uprising, reversal, continuation, late, *extras],
         limit=3,
+        index_trend_ok=True,
     )
     assert [r["code"] for r in classified["uprising"]] == ["0700.HK", "0001.HK", "0002.HK"]
     assert classified["uprising_total"] == 12
@@ -173,11 +174,12 @@ def test_weak_index_suppresses_uprising_keeps_reversal():
     assert [r["code"] for r in classified["reversal"]] == ["1810.HK"]
 
 
-def test_missing_index_does_not_suppress():
+def test_missing_index_suppresses_uprising_fail_closed():
     up = _row(s2_recent_close_breakout=True)
     classified = classify_daily_monitor([up], index_trend_ok=None)
-    assert classified["uprising_suppressed"] is False
-    assert len(classified["uprising"]) == 1
+    assert classified["uprising_suppressed"] is True
+    assert classified["uprising"] == []
+    assert classified["uprising_total"] == 1
 
 
 def test_sort_prefers_s2_then_smaller_extension_then_score():
@@ -185,7 +187,7 @@ def test_sort_prefers_s2_then_smaller_extension_then_score():
     b = _row(code="B.HK", s2_recent_close_breakout=True, breakout_extension_n=0.8, potential_score=10)
     c = _row(code="C.HK", s2_recent_close_breakout=True, breakout_extension_n=0.2, potential_score=10)
     d = _row(code="D.HK", s2_recent_close_breakout=True, breakout_extension_n=0.2, potential_score=40)
-    classified = classify_daily_monitor([a, b, c, d])
+    classified = classify_daily_monitor([a, b, c, d], index_trend_ok=True)
     assert [r["code"] for r in classified["uprising"]] == ["D.HK", "C.HK", "B.HK", "A.HK"]
 
 
@@ -255,6 +257,7 @@ def test_suppressed_uprising_line_in_report():
         "uprising": [],
         "reversal": [],
         "uprising_suppressed": True,
+        "index_trend_ok": False,
         "stats": {},
         "monitor": True,
     }
@@ -262,6 +265,22 @@ def test_suppressed_uprising_line_in_report():
     assert "大盘趋势未过，今日不列趋势首破" in text
     assert "没有股票符合止跌转折条件" in text
     assert "趋势首破因大盘趋势未过已省略" in text
+
+
+def test_missing_index_suppression_banner_not_labelled_as_weak_trend():
+    payload = {
+        "uprising": [],
+        "reversal": [],
+        "uprising_suppressed": True,
+        "index_trend_ok": None,
+        "stats": {},
+        "monitor": True,
+    }
+    text = "\n".join(format_monitor_list_sections(payload))
+    assert "指数趋势数据不足，今日不列趋势首破" in text
+    assert "大盘趋势未过，今日不列趋势首破" not in text
+    summary = "\n".join(format_monitor_summary_lines(payload))
+    assert "指数趋势数据不足已省略" in summary
 
 
 def test_index_insufficient_banner():
