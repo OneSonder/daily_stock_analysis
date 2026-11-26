@@ -257,7 +257,34 @@ def test_index_trend_suppresses_only_the_main_feed():
     assert selected["uprising"] == []
     assert [row["code"] for row in selected["reversal"]] == ["REV.HK"]
     text = format_candidate_report({**selected, "as_of": "2026-11-25", "bar_date": "2026-11-25", "universe_label": "恒指成分"})
-    assert "不列趋势首破" in text
+    assert "大盘趋势未过" in text
+
+
+def test_missing_index_suppresses_main_feed_fail_closed():
+    up = _ready(code="UP.HK")
+    selected = select_candidates([up], market="hk", index_trend_ok=None)
+    assert selected["uprising"] == []
+    assert selected["uprising_suppressed"] is True
+    text = format_candidate_report(
+        {
+            **selected,
+            "as_of": "2026-11-25",
+            "bar_date": "2026-11-25",
+            "universe_label": "恒指成分",
+            "index_regime": {"name": "恒生指数", "status": "error", "turtle_trend_ok": None},
+        }
+    )
+    assert "指数趋势数据不足，今日不列趋势首破" in text
+    assert "大盘趋势未过" not in text
+    assert "趋势数据不足" in text
+
+
+def test_report_lists_uprising_gates_as_facts():
+    up = _ready(code="UP.HK", s1_entry_allowed=False, volume_confirm=True, breakout_extension_n=0.35)
+    selected = select_candidates([up], market="hk", index_trend_ok=True)
+    text = format_candidate_report({**selected, "as_of": "2026-11-25", "bar_date": "2026-11-25", "universe_label": "恒指成分"})
+    assert "| S1开仓 | 趋势 | MA100 | 延伸N | 放量 |" in text
+    assert "UP.HK" in text
 
 
 def test_display_caps_and_dual_listings():
