@@ -9,7 +9,7 @@ Rules-only Yahoo scan. The main take is the close-first S1/S2 trend first-break 
 | Universes | Hang Seng constituents (`HSI_STOCKS`) and `US_TOP`. Not `HK_ALL`, not an open US universe, not A-shares, gold, bronze, or BTC. |
 | HK schedule | 16:20 Asia/Shanghai, Monday–Friday. UTC cron `20 8 * * 1-5`. After the 16:08–16:10 closing auction. |
 | US schedule | 05:20 Asia/Shanghai, Tuesday–Saturday. UTC cron `20 21 * * 1-5`. After the regular close in both EST and EDT. Saturday 28 Nov 2026 still stamps Friday 27 Nov (early close). |
-| Stable artifacts | `reports/candidate_screen/hk/latest.md` and `reports/candidate_screen/us/latest.md`. The same run also writes `reports/candidate_screen/<market>/<as-of>.md`. Actions artifacts: `candidate-screen-hk`, `candidate-screen-us`. |
+| Stable artifacts | `reports/candidate_screen/hk/latest.md` and `reports/candidate_screen/us/latest.md`. The same run also writes `reports/candidate_screen/<market>/<as-of>.md`. After a successful GitHub Actions run, those markdown files are also committed on branch `mine` (public raw URLs below). Actions artifacts remain as backup: `candidate-screen-hk`, `candidate-screen-us`. |
 | HK floors | Last close ≥ HK$1. 20-day average turnover ≥ HK$20,000,000. Native HKD. |
 | US floors | Last close ≥ US$5. 20-day average dollar volume ≥ US$5,000,000. Native USD. |
 | Fail closed | Missing close, missing or uncomputable 20-day turnover, an as-of bar with zero turnover or no trade, or fewer than 15 of the last 20 sessions with a valid close and positive turnover. No markdown file is written. |
@@ -59,12 +59,30 @@ N 是 20 日 ATR。2N 止损 = 收盘 − 2N。两者都只打印价格。
 
 ## 产物路径
 
-稳定路径（Actions artifact 与本地 dry-run 相同）：
+稳定路径（Actions artifact、仓库 `mine` 分支与本地 dry-run 相同）：
 
 - `reports/candidate_screen/hk/latest.md`（artifact 名 `candidate-screen-hk`）
 - `reports/candidate_screen/us/latest.md`（artifact 名 `candidate-screen-us`）
 
-同一次运行另写 `reports/candidate_screen/<market>/<as-of>.md`。`reports/` 被 gitignore，名单不入库。
+同一次运行另写 `reports/candidate_screen/<market>/<as-of>.md`（例如 `reports/candidate_screen/us/2025-11-25.md`）。
+
+### CFO 公开读取（无需 gh / artifact）
+
+分支固定为 `mine`。成功跑完并提交后可用 raw 或 GitHub API 读取：
+
+| 市场 | `latest.md` | 按 as-of 日期 |
+| --- | --- | --- |
+| 港股 | https://raw.githubusercontent.com/OneSonder/daily_stock_analysis/mine/reports/candidate_screen/hk/latest.md | `…/hk/YYYY-MM-DD.md`（把 `latest.md` 换成日期文件名） |
+| 美股 | https://raw.githubusercontent.com/OneSonder/daily_stock_analysis/mine/reports/candidate_screen/us/latest.md | `…/us/YYYY-MM-DD.md` |
+
+完整 dated 示例（把 as-of 代入 `YYYY-MM-DD`）：
+
+- https://raw.githubusercontent.com/OneSonder/daily_stock_analysis/mine/reports/candidate_screen/hk/YYYY-MM-DD.md
+- https://raw.githubusercontent.com/OneSonder/daily_stock_analysis/mine/reports/candidate_screen/us/YYYY-MM-DD.md
+
+若 `latest.md` 不存在、404、或文件内 as-of 日期未更新到预期交易日，表示该次 take 未落地（筛选失败关闭、工作流未跑、或 GitHub 未触发 schedule）。仍以工作流运行记录与 artifact 作为核对备份。
+
+仅 `reports/candidate_screen/{hk,us}/*.md` 会由工作流提交；其余 `reports/` 仍被 gitignore。
 
 ```bash
 python scripts/run_candidate_screen.py --market hk --dry-run

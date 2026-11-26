@@ -18,6 +18,9 @@ on:
           - hk
           - us
 
+permissions:
+  contents: write
+
 jobs:
   hk:
     if: |
@@ -54,6 +57,28 @@ jobs:
           path: reports/candidate_screen/hk/
           if-no-files-found: error
 
+      - name: Publish HK candidate take to mine
+        if: success()
+        env:
+          MARKET: hk
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(reports/candidate_screen/"${MARKET}"/*.md)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No markdown files to publish for ${MARKET}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "${files[@]}"
+          if git diff --staged --quiet; then
+            echo "No changes to commit for ${MARKET}"
+            exit 0
+          fi
+          git commit -m "chore: publish ${MARKET} candidate screen take"
+          git push origin HEAD:mine
+
   us:
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.market == 'us') ||
@@ -88,3 +113,25 @@ jobs:
           name: candidate-screen-us
           path: reports/candidate_screen/us/
           if-no-files-found: error
+
+      - name: Publish US candidate take to mine
+        if: success()
+        env:
+          MARKET: us
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(reports/candidate_screen/"${MARKET}"/*.md)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No markdown files to publish for ${MARKET}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "${files[@]}"
+          if git diff --staged --quiet; then
+            echo "No changes to commit for ${MARKET}"
+            exit 0
+          fi
+          git commit -m "chore: publish ${MARKET} candidate screen take"
+          git push origin HEAD:mine

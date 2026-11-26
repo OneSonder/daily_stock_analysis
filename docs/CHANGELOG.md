@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 每日候选筛选成功后把工作流产出的 `reports/candidate_screen/{hk,us}/*.md` 提交到 `mine`，支持 raw 公开读取；保留 Actions artifact 备份；见 `docs/candidate-screen.md`。
 - [改进] 每日监控卡片与明细表标注当日 MACD 金叉（含零轴上金叉）；不作为入名单条件。
 - [改进] 每日监控报告在明细表上方增加投资者卡片（收盘/2N止损/距2N），新入多于近期中位数时加环境提示（非预测）。
 - [改进] 每日监控报告把 新/仍在 拆成今日新入与昨日仍在分表，列名改为长标签，并增加今日监控摘要与距2N止损（名单全员，非预测）。
