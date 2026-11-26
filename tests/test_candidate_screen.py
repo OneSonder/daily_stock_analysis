@@ -453,6 +453,9 @@ def test_schedule_and_workflow_do_not_use_the_old_jobs():
     for banned in ("HSI_HOLDINGS", "STOCK_LIST", "GEMINI", "TENCENT", "TEAMS", "LITELLM"):
         assert banned not in workflow
     assert "ref: mine" in workflow
+    assert "contents: write" in workflow
+    assert "Publish HK candidate take to mine" in workflow
+    assert "Publish US candidate take to mine" in workflow
     shanghai = ZoneInfo("Asia/Shanghai")
     utc = ZoneInfo("UTC")
     hk_run = datetime(2026, 11, 25, 8, 20, tzinfo=utc)

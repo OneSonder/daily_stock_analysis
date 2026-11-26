@@ -55,7 +55,15 @@ env/
 # 数据和日志
 /data/
 logs/
-reports/
+reports/*
+!reports/candidate_screen/
+reports/candidate_screen/*
+!reports/candidate_screen/hk/
+!reports/candidate_screen/us/
+reports/candidate_screen/hk/*
+!reports/candidate_screen/hk/*.md
+reports/candidate_screen/us/*
+!reports/candidate_screen/us/*.md
 *.db
 *.sqlite
 *.sqlite3
