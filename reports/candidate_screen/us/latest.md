@@ -7,8 +7,8 @@
 
 - 市场: us
 - 日程: 美股周二至周六 05:20 Asia/Shanghai（美东常规收盘之后，EST 与 EDT 都已收盘）
-- as-of session: 2026-11-25（get_effective_trading_date）
-- bar date: 2026-11-25
+- as-of session: 2026-11-27（get_effective_trading_date）
+- bar date: 2026-11-27
 - 货币: USD（只用该上市地价格，不把 HKD/USD/CNY 互相换算）
 - 流动性门槛: 收盘 ≥ 5.0 USD；20 日均成交额 ≥ 5000000.0 USD；最近 20 个交易日里至少 15 日有有效收盘和正成交额
 - 显示上限（不是头寸单位）: 单市场 4 / 紧密组 6 / 松散组 10 / 单方向 12。双重上市按一家公司计。
